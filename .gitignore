@@ -196,3 +196,6 @@ wandb/
 
 # Target Data
 target_data/
+
+# Claude Code
+CLAUDE.md
