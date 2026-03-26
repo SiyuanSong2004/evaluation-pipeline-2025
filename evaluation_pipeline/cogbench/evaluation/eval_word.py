@@ -123,7 +123,7 @@ def eval_word_fmri(args):
     with open(words_path, encoding="utf-8") as f:
         stimuli_list = [line.strip() for line in f if line.strip()]
 
-    model_name = os.path.basename(str(args.model_path_or_name))
+    model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
     feature_json_path = os.path.join(data_path, model_name, "word_feature.json")
     if not os.path.exists(feature_json_path):
         raise FileNotFoundError(

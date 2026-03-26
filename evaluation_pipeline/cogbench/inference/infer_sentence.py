@@ -7,33 +7,10 @@ from typing import List
 import numpy as np
 import scipy.io as scio
 import torch
-from transformers import AutoModel, AutoTokenizer
+from ..utils.utils import get_model_and_tokenizer, DEVICE
 
 
 BATCH_SIZE = 64
-DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-
-
-def get_model_and_tokenizer(model_path_or_name: str, revision_name: str | None = None):
-	model = AutoModel.from_pretrained(
-		model_path_or_name,
-		trust_remote_code=True,
-		revision=revision_name,
-	)
-	tokenizer = AutoTokenizer.from_pretrained(
-		model_path_or_name,
-		trust_remote_code=True,
-		revision=revision_name,
-		use_fast=True,
-	)
-	model = model.to(DEVICE)
-	model.eval()
-
-	if tokenizer.pad_token is None and tokenizer.eos_token is not None:
-		tokenizer.pad_token = tokenizer.eos_token
-
-	return model, tokenizer
-
 
 def parse_story_id(path: str) -> int:
 	name = os.path.basename(path)
@@ -127,8 +104,9 @@ def infer_sentence(
 	revision_name: str | None = None,
 	layer_index: int = -1,
 ):
+	model_name = os.path.basename(os.path.normpath(model_path_or_name))
 	if output_dir is None:
-		output_dir = os.path.join(datapath, "word_features", os.path.basename(model_path_or_name))
+		output_dir = os.path.join(datapath, "word_features", model_name)
 
 	os.makedirs(output_dir, exist_ok=True)
 
@@ -155,50 +133,3 @@ def infer_sentence(
 
 	return output_dir
 
-
-def main(args):
-	infer_sentence(
-		model_path_or_name=args.model_name,
-		datapath=args.data_path,
-		output_dir=args.output_dir,
-		layer_index=args.layer,
-		revision_name=args.revision_name,
-	)
-
-
-if __name__ == "__main__":
-	parser = argparse.ArgumentParser(
-		description="Extract story-based word features for sentence-level cogbench tasks."
-	)
-	parser.add_argument(
-		"--data_path",
-		type=str,
-		required=True,
-		help="Cogbench data root containing the story directory.",
-	)
-	parser.add_argument(
-		"--output_dir",
-		type=str,
-		default=None,
-		help="Output directory for story_*.mat feature files.",
-	)
-	parser.add_argument(
-		"--model_name",
-		type=str,
-		default="bert-base-chinese",
-		help="Hugging Face model name or local model path.",
-	)
-	parser.add_argument(
-		"--revision_name",
-		type=str,
-		default=None,
-		help="Optional Hugging Face revision.",
-	)
-	parser.add_argument(
-		"--layer",
-		type=int,
-		default=-1,
-		help="Hidden layer index to extract.",
-	)
-
-	main(parser.parse_args())

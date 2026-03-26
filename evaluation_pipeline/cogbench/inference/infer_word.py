@@ -70,6 +70,7 @@ def infer_word(
 	revision_name: str | None = None,
 ):
 	root_path = _resolve_cogbench_root(datapath)
+	model_name = os.path.basename(os.path.normpath(model_path_or_name))
 	data_path = os.path.join(root_path, "word", "word.txt")
 	with open(data_path, "r", encoding="utf-8") as f:
 		words = f.read().splitlines()
@@ -78,7 +79,7 @@ def infer_word(
 	word_features = extract_word_features(words, model, tokenizer)
 
 	if save_predictions:
-		save_path = os.path.join(root_path, os.path.basename(model_path_or_name), "word_feature.json")
+		save_path = os.path.join(root_path, model_name, "word_feature.json")
 		os.makedirs(os.path.dirname(save_path), exist_ok=True)
 		serializable_features = {word: feature.tolist() for word, feature in word_features.items()}
 		with open(save_path, "w", encoding="utf-8") as f:
