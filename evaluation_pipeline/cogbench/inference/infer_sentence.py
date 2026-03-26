@@ -113,7 +113,7 @@ def encode_words_mean_pool(
 
 				token_vecs = hidden[token_positions]
 				word_vec = token_vecs.mean(dim=0)
-				all_word_reprs.append(word_vec.detach().cpu().numpy().astype(np.float32))
+				all_word_reprs.append(word_vec.to(dtype=torch.float32).detach().cpu().numpy())
 
 	if not all_word_reprs:
 		return np.zeros((0, model.config.hidden_size), dtype=np.float32)

@@ -1,9 +1,10 @@
 import argparse
 import pathlib
 import torch
-from transformers import AutoModel, AutoTokenizer
-
-DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+from .infer import infer
+from .eval import eval
+import json
+from io import TextIOWrapper
 
 def _parse_arguments():
     parser = argparse.ArgumentParser()
@@ -16,13 +17,9 @@ def _parse_arguments():
     parser.add_argument("--output_dir", default="results", type=pathlib.Path, help="Path to the data directory")
     parser.add_argument("--revision_name", default=None, type=str, help="Name of the checkpoint/version of the model to test. (If None, the main will be used)")
 
-    parser.add_argument("--min_temperature", default=1.0, type=float, help="Minimum temperature to apply to the logits.")
-    parser.add_argument("--max_temperature", default=None, type=float, help="Maximum temperature to apply to the logits. If None, only the minimum temperature will be considered.")
-    parser.add_argument("--temperature_interval", default=0.05, type=float, help="Step size between temperatures applied to the logits.")
     parser.add_argument("--batch_size", default=64, type=int, help="Batch size for evaluation")
-    parser.add_argument("--non_causal_batch_size", default=64, type=int, help="Mini-batch size to process each batch of inputs involving masked tokens")
-    parser.add_argument("--full_sentence_scores", action="store_true", help="Whether to use the entire sentence to calculate the sentence scores rather than just the completion. (Only implemented for EWoK)")
-    parser.add_argument("--save_predictions", action="store_true", help="Whether or not to save predictions.")
+    parser.add_argument("--save_predictions", default=False, action="store_true", help="Whether or not to save predictions.")
+    parser.add_argument("--fast", default=False, action="store_true", help="Enable fast evaluation mode.")
 
     return parser.parse_args()
 
@@ -66,20 +63,6 @@ def process_results(args: argparse.ArgumentParser, results: dict):
     return accuracies, average_accuracies
 
 
-def process_results_wug(results):
-    correlations = {temp : {} for temp in results}
-    avg_correlations = {}
-
-    for temp, temp_results in results.items():
-        correlations[temp]["UID"] = {"avg": temp_results["correlation"]}
-        avg_correlations[temp] = temp_results["correlation"]
-        # for subdomain, subdomain_correlations in temp_results.items():
-        #     correlations[temp][subdomain] = {"avg": subdomain_correlations["correlation"]}
-        #     avg_correlations[temp] = subdomain_correlations["correlation"]
-
-    return correlations, avg_correlations
-
-
 def create_evaluation_report(temperature: float, avg_accuracy: torch.Tensor, accuracies: dict[str, list[dict[str, float]]], task: str | None = None, file: TextIOWrapper | None = None) -> None:
     """This function creates a report and either saves it to a file or prints it to the terminal.
 
@@ -114,46 +97,8 @@ def save_predictions(args, predictions, best_temp):
 
 def main():
     args = _parse_arguments()
-    if args.images_path is not None:
-        assert args.batch_size == 1, "Multimodal only works in batch size 1!"
-    dataset = args.data_path.stem
-    args.model_name = pathlib.Path(args.model_path_or_name).stem
-    if args.revision_name is None:
-        revision_name = "main"
-    else:
-        revision_name = args.revision_name
-    args.output_path = args.output_dir / args.model_name / revision_name / "zero_shot" / args.backend / args.task / dataset
-    args.output_path.mkdir(parents=True, exist_ok=True)
-
-    # Get results
-    model = get_model(args)
-    dataloader = get_dataloader(args)
-    temperatures = get_temperatures(args)
-    results, predictions = compute_results(args, model, dataloader, temperatures)
-
-    # Process results
-    if "wug" in args.task:
-        accuracies, average_accuracies = process_results_wug(results)
-    else:
-        accuracies, average_accuracies = process_results(args, results)
-    best_acc = -1
-    best_temp = -1
-    for temperature, acc in average_accuracies.items():
-        print(f"{temperature}\t{acc:.2f}")
-        if acc > best_acc:
-            best_acc = acc
-            best_temp = temperature
-    print()
-
-    # Report and save
-    create_evaluation_report(best_temp, average_accuracies[best_temp], accuracies[best_temp], task=args.task)
-    with (args.output_path / "best_temperature_report.txt").open("w") as f:
-        create_evaluation_report(best_temp, average_accuracies[best_temp], accuracies[best_temp], task=args.task, file=f)
-
-    # Save predictions
-    if args.save_predictions:
-        save_predictions(args, predictions, best_temp)
-
+    infer(args)
+    eval(args)
 
 if __name__ == "__main__":
     main()
