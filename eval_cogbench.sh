@@ -1,35 +1,95 @@
 #!/bin/bash
 
-MODEL_PATH=$1
-LR=${2:-3e-5}           # default: 3e-5
-BSZ=${3:-32}            # default: 32
-BIG_BSZ=${4:-16}        # default: 16
-MAX_EPOCHS=${5:-10}     # default: 10
-WSC_EPOCHS=${6:-30}     # default: 30
-SEED=${7:-42}           # default: 42
-EVAL_DIR=${8:-"evaluation_data/full_eval/cogbench"}  # default: evaluation_data/full_eval/cogbench
+set -euo pipefail
+
+MODEL_PATH=""
+BACKEND=${BACKEND:-"mlm"}
+REVISION_NAME=${REVISION_NAME:-""}
+EVAL_DIR="evaluation_data/cogbench"
+TASKS="word_fmri,fmri,meg"
+OUTPUT_DIR=${OUTPUT_DIR:-"$PWD"}
+
+# Parse command-line arguments.
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --model_path|--model_path_or_name|-m)
+            MODEL_PATH="$2"
+            shift 2
+            ;;
+        --backend)
+            BACKEND="$2"
+            shift 2
+            ;;
+        --revision_name)
+            REVISION_NAME="$2"
+            shift 2
+            ;;
+        --eval_dir)
+            EVAL_DIR="$2"
+            shift 2
+            ;;
+        --output_dir)
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --task|--tasks)
+            TASKS="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: bash eval_cogbench_fast.sh --model_path <path_or_hf_name> [--task word_fmri|fmri|meg|comma_list] [--backend mlm|causal|mntp|enc_dec_mask|enc_dec_prefix] [--eval_dir <path>] [--output_dir <path, default: current directory>] [--revision_name <name>]"
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            exit 1
+            ;;
+    esac
+done
+
+if [[ -z "$MODEL_PATH" ]]; then
+    echo "Error: model path is required. Use --model_path <path_or_hf_name>."
+    exit 1
+fi
 
 
-python -m evaluation_pipeline.cogbench.run \
-    --model_path_or_name $MODEL_PATH \
-    --backend $BACKEND \
-    --task word_fmri \
-    --data_path "${EVAL_DIR}/word_fmri" \
-    --save_predictions \
-    --revision_name $REVISION_NAME
+# Normalize comma-separated task list for membership checks.
+TASKS=",${TASKS},"
 
-python -m evaluation_pipeline.cogbench.run \
-    --model_path_or_name $MODEL_PATH \
-    --backend $BACKEND \
-    --task fmri \
-    --data_path "${EVAL_DIR}/discourse_fmri" \
-    --save_predictions \
-    --revision_name $REVISION_NAME
+REVISION_ARGS=()
+if [[ -n "$REVISION_NAME" ]]; then
+    REVISION_ARGS+=(--revision_name "$REVISION_NAME")
+fi
 
-python -m evaluation_pipeline.cogbench.run \
-    --model_path_or_name $MODEL_PATH \
-    --backend $BACKEND \
-    --task meg \
-    --data_path "${EVAL_DIR}/meg" \
-    --save_predictions \
-    --revision_name $REVISION_NAME    
+if [[ "$TASKS" == *",word_fmri,"* ]]; then
+    python -m evaluation_pipeline.cogbench.run \
+        --model_path_or_name "$MODEL_PATH" \
+        --backend "$BACKEND" \
+        --task word_fmri \
+        --data_path "${EVAL_DIR}" \
+        --output_dir "${OUTPUT_DIR}" \
+        --save_predictions \
+        "${REVISION_ARGS[@]}"
+fi
+
+if [[ "$TASKS" == *",fmri,"* ]]; then
+    python -m evaluation_pipeline.cogbench.run \
+        --model_path_or_name "$MODEL_PATH" \
+        --backend "$BACKEND" \
+        --task fmri \
+        --data_path "${EVAL_DIR}" \
+        --output_dir "${OUTPUT_DIR}" \
+        --save_predictions \
+        "${REVISION_ARGS[@]}"
+fi
+
+if [[ "$TASKS" == *",meg,"* ]]; then
+    python -m evaluation_pipeline.cogbench.run \
+        --model_path_or_name "$MODEL_PATH" \
+        --backend "$BACKEND" \
+        --task meg \
+        --data_path "${EVAL_DIR}" \
+        --output_dir "${OUTPUT_DIR}" \
+        --save_predictions \
+        "${REVISION_ARGS[@]}"
+fi

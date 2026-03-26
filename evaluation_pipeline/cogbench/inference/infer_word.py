@@ -66,6 +66,7 @@ def extract_word_features(words, model, tokenizer, batch_size=BATCH_SIZE):
 def infer_word(
 	model_path_or_name: str,
 	datapath: str,
+	output_root: str | None = None,
 	save_predictions: bool = SAVE_PREDICTIONS,
 	revision_name: str | None = None,
 ):
@@ -79,7 +80,8 @@ def infer_word(
 	word_features = extract_word_features(words, model, tokenizer)
 
 	if save_predictions:
-		save_path = os.path.join(root_path, model_name, "word_feature.json")
+		persist_root = output_root if output_root is not None else root_path
+		save_path = os.path.join(persist_root, model_name, "word_feature.json")
 		os.makedirs(os.path.dirname(save_path), exist_ok=True)
 		serializable_features = {word: feature.tolist() for word, feature in word_features.items()}
 		with open(save_path, "w", encoding="utf-8") as f:
@@ -92,6 +94,7 @@ def main(args):
 	infer_word(
 		model_path_or_name=args.model_name,
 		datapath=args.data_path,
+		output_root=getattr(args, "output_root", None),
 		save_predictions=not args.no_save_predictions,
 		revision_name=args.revision_name,
 	)

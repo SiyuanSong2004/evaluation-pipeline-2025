@@ -1,10 +1,14 @@
 import argparse
+import glob
+import json
+import os
 import pathlib
-import torch
+
+import numpy as np
+import scipy.io as sio
+
 from .infer import infer
 from .eval import eval
-import json
-from io import TextIOWrapper
 
 def _parse_arguments():
     parser = argparse.ArgumentParser()
@@ -24,81 +28,83 @@ def _parse_arguments():
     return parser.parse_args()
 
 
-def process_results(args: argparse.ArgumentParser, results: dict):
-    """This function computes accuracy metrics and, if necessary, other dataset-specific metrics
-    given dataset sizes and numbers of correct predictions
+def create_evaluation_report(args: argparse.ArgumentParser):
+    output_root = str(args.output_dir)
+    model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
+    model_root = pathlib.Path(output_root) / model_name
+    output_dir = model_root / "results"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    Args:
-        args (argparse.ArgumentParser): ArgumentParser object used to determine task
-        results (dict): Results obtained from running compute_results
-    """
-    # Compute accuracies
-    accuracies = {temp : {} for temp in results}
-    for temp, temp_results in results.items():
-        for subdomain, count_dict in temp_results.items():
-            keys = count_dict["total"].keys()
-            subdomain_accs = {key : 100.0 * count_dict["correct"][key] / count_dict["total"][key] for key in keys}
-            accuracies[temp][subdomain] = subdomain_accs
+    metrics = []
 
-    # Average accuracies
-    average_accuracies = {}
-    if args.task != "entity_tracking":
-        for temp, accuracy in accuracies.items():
-            average_accuracies[temp] = sum(accuracy["UID"].values()) / len(accuracy["UID"].values())
-    else:
-        splits = ["regular", "ambiref", "move_contents"]
-        for temp, subdomain_dict in accuracies.items():
-            split_accs = []
-            split_dict = subdomain_dict["UID"]
-            for split in splits:
-                split_keys = [key for key in split_dict if key.startswith(split)]
-                if not split_keys:
-                    continue
-                curr_acc = sum([split_dict[key] for key in split_keys]) / len(split_keys)
+    if args.task == "word_fmri":
+        pattern = os.path.join(output_root, model_name, "results", "word_fmri", "*_score.mat")
+        if args.fast:
+            pattern = os.path.join(output_root, model_name, "results", "word_fmri", "*_sanity_score.mat")
 
-                split_dict[split] = curr_acc
-                split_accs.append(curr_acc)
-            average_accuracies[temp] = sum(split_accs) / len(split_accs)
+        for file_path in sorted(glob.glob(pattern)):
+            mat = sio.loadmat(file_path)
+            if "score" not in mat:
+                continue
+            score = float(np.asarray(mat["score"]).squeeze())
+            metrics.append({"file": file_path, "value": score})
 
-    return accuracies, average_accuracies
+    elif args.task == "fmri":
+        pattern = os.path.join(output_root, model_name, "results", "fmri", "*", "*_average.mat")
+        for file_path in sorted(glob.glob(pattern)):
+            mat = sio.loadmat(file_path)
+            if "test_corrs" not in mat:
+                continue
+            score = float(np.nanmean(np.asarray(mat["test_corrs"], dtype=float)))
+            metrics.append({"file": file_path, "value": score})
 
+    elif args.task == "meg":
+        pattern = os.path.join(output_root, model_name, "results", "meg", "*_rsa_*.mat")
+        for file_path in sorted(glob.glob(pattern)):
+            mat = sio.loadmat(file_path)
+            if "sess_avg" not in mat:
+                continue
 
-def create_evaluation_report(temperature: float, avg_accuracy: torch.Tensor, accuracies: dict[str, list[dict[str, float]]], task: str | None = None, file: TextIOWrapper | None = None) -> None:
-    """This function creates a report and either saves it to a file or prints it to the terminal.
+            sess_avg = mat["sess_avg"]
+            score = None
+            if sess_avg.dtype.names:
+                row = sess_avg[0, 0]
+                values = []
+                for field in row.dtype.names:
+                    values.append(np.asarray(row[field], dtype=float))
+                if values:
+                    score = float(np.nanmean(np.concatenate([v.reshape(-1) for v in values])))
+            else:
+                score = float(np.nanmean(np.asarray(sess_avg, dtype=float)))
 
-    Args:
-        temperature(float): The temperature at which the model is evaluated.
-        temperature_pos(int): The position of the evaluated temperature.
-        avg_accuracy(torch.Tensor): The average accuracy of the model at the given temperature.
-        avg_accuracy(dict[str, list[dict[str, float]]]): The finegrained accuracies of the model
-            at the given temperature.
-        file(TextIOWrapper | None): The file to write to results to. (If None, it will printed
-            printed to the terminal)
-    """
-    metric = "ACCURACY" if "wug" not in task else "SPEARMAN'S RHO"
-    print(f"TEMPERATURE: {temperature:.2f}", file=file)
-    print(file=file)
+            if score is not None:
+                metrics.append({"file": file_path, "value": score})
 
-    for domain, accuracy in accuracies.items():
-        print(f"### {domain.upper()} {metric}", file=file)
-        for subdomain, acc in accuracy.items():
-            print(f"{subdomain}: {acc:.2f}", file=file)
-        print(file=file)
+    values = [item["value"] for item in metrics]
+    summary = {
+        "task": args.task,
+        "model_name": model_name,
+        "output_root": output_root,
+        "fast": bool(args.fast),
+        "n_result_files": len(metrics),
+        "mean": float(np.nanmean(values)) if values else None,
+        "min": float(np.nanmin(values)) if values else None,
+        "max": float(np.nanmax(values)) if values else None,
+        "files": metrics,
+    }
 
-    print(f"### AVERAGE {metric}", file=file)
-    print(f"{avg_accuracy:.2f}", file=file)
-    print(file=file)
+    report_path = output_dir / f"cogbench_{args.task}_{model_name}_report.json"
+    with report_path.open("w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
 
-
-def save_predictions(args, predictions, best_temp):
-    with (args.output_path / "predictions.json").open("w") as f:
-        json.dump(predictions[best_temp], f)
+    print(f"Saved evaluation report: {report_path}")
 
 
 def main():
     args = _parse_arguments()
     infer(args)
     eval(args)
+    create_evaluation_report(args)
 
 if __name__ == "__main__":
     main()

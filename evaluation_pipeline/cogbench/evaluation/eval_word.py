@@ -119,12 +119,13 @@ def _load_feature_matrix(feature_json_path, stimuli_list):
 
 def eval_word_fmri(args):
     data_path = _resolve_cogbench_root(str(args.data_path))
+    output_root = str(args.output_dir)
     words_path = os.path.join(data_path, "word", "word.txt")
     with open(words_path, encoding="utf-8") as f:
         stimuli_list = [line.strip() for line in f if line.strip()]
 
     model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
-    feature_json_path = os.path.join(data_path, model_name, "word_feature.json")
+    feature_json_path = os.path.join(output_root, model_name, "word_feature.json")
     if not os.path.exists(feature_json_path):
         raise FileNotFoundError(
             f"Feature file not found: {feature_json_path}. Please run inference first."
@@ -134,7 +135,7 @@ def eval_word_fmri(args):
 
     fmri_dir = os.path.join(data_path, "word_fmri")
     fmri_files = sorted(glob.glob(os.path.join(fmri_dir, "*_selected.mat")))
-    out_dir = os.path.join(data_path, "word", "results", model_name)
+    out_dir = os.path.join(output_root, model_name, "results", "word_fmri")
 
     if args.fast:
         fmri_files = fmri_files[:1]

@@ -10,13 +10,15 @@ from ..utils.meg_selection import sensor_selection
 
 def eval_meg(args: ArgumentParser):
     data_path = str(args.data_path)
+    output_root = str(args.output_dir)
     model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
+    model_root = os.path.join(output_root, model_name)
 
-    # Use features produced by infer_sentence for this model.
-    feature_root = os.path.join(data_path, "word_features", model_name)
+    # Use sentence features produced by infer_sentence for this model.
+    feature_root = model_root
     # notPU masks live under cogbench/notPU.
     pu_root = data_path + "/"
-    result_root = os.path.join(data_path, "results", "meg", model_name)
+    result_root = os.path.join(model_root, "results", "meg")
 
     starts = [6, 7]
     if args.fast:

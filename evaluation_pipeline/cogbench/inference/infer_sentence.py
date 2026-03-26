@@ -11,6 +11,7 @@ from ..utils.utils import get_model_and_tokenizer, DEVICE
 
 
 BATCH_SIZE = 64
+SENTENCE_FEATURE_PREFIX = "sentence_feature"
 
 def parse_story_id(path: str) -> int:
 	name = os.path.basename(path)
@@ -101,12 +102,13 @@ def infer_sentence(
 	model_path_or_name: str,
 	datapath: str,
 	output_dir: str | None = None,
+	save_predictions: bool = True,
 	revision_name: str | None = None,
 	layer_index: int = -1,
 ):
 	model_name = os.path.basename(os.path.normpath(model_path_or_name))
 	if output_dir is None:
-		output_dir = os.path.join(datapath, "word_features", model_name)
+		output_dir = os.path.join(datapath, model_name)
 
 	os.makedirs(output_dir, exist_ok=True)
 
@@ -127,9 +129,10 @@ def infer_sentence(
 			layer_index=layer_index,
 		)
 
-		save_path = os.path.join(output_dir, f"story_{story_id}.mat")
-		scio.savemat(save_path, {"data": data})
-		print(f"Saved {save_path}: data shape = {data.shape}")
+		if save_predictions:
+			save_path = os.path.join(output_dir, f"{SENTENCE_FEATURE_PREFIX}_story_{story_id}.mat")
+			scio.savemat(save_path, {"data": data})
+			print(f"Saved {save_path}: data shape = {data.shape}")
 
 	return output_dir
 

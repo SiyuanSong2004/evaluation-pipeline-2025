@@ -7,6 +7,7 @@ BACKEND=${BACKEND:-"mlm"}
 REVISION_NAME=${REVISION_NAME:-""}
 EVAL_DIR="evaluation_data/cogbench"
 TASKS="word_fmri,fmri,meg"
+OUTPUT_DIR=${OUTPUT_DIR:-"$PWD"}
 
 # Parse command-line arguments.
 while [[ $# -gt 0 ]]; do
@@ -27,22 +28,21 @@ while [[ $# -gt 0 ]]; do
             EVAL_DIR="$2"
             shift 2
             ;;
+        --output_dir)
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
         --task|--tasks)
             TASKS="$2"
             shift 2
             ;;
         -h|--help)
-            echo "Usage: bash eval_cogbench_fast.sh --model_path <path_or_hf_name> [--task word_fmri|fmri|meg|comma_list] [--backend mlm|causal|mntp|enc_dec_mask|enc_dec_prefix] [--eval_dir <path>] [--revision_name <name>]"
+            echo "Usage: bash eval_cogbench_fast.sh --model_path <path_or_hf_name> [--task word_fmri|fmri|meg|comma_list] [--backend mlm|causal|mntp|enc_dec_mask|enc_dec_prefix] [--eval_dir <path>] [--output_dir <path, default: current directory>] [--revision_name <name>]"
             exit 0
             ;;
         *)
-            if [[ -z "$MODEL_PATH" ]]; then
-                MODEL_PATH="$1"
-                shift
-            else
-                echo "Unknown argument: $1"
-                exit 1
-            fi
+            echo "Unknown argument: $1"
+            exit 1
             ;;
     esac
 done
@@ -67,6 +67,7 @@ if [[ "$TASKS" == *",word_fmri,"* ]]; then
         --backend "$BACKEND" \
         --task word_fmri \
         --data_path "${EVAL_DIR}" \
+        --output_dir "${OUTPUT_DIR}" \
         --save_predictions \
         "${REVISION_ARGS[@]}" \
         --fast
@@ -78,6 +79,7 @@ if [[ "$TASKS" == *",fmri,"* ]]; then
         --backend "$BACKEND" \
         --task fmri \
         --data_path "${EVAL_DIR}" \
+        --output_dir "${OUTPUT_DIR}" \
         --save_predictions \
         "${REVISION_ARGS[@]}" \
         --fast
@@ -89,6 +91,7 @@ if [[ "$TASKS" == *",meg,"* ]]; then
         --backend "$BACKEND" \
         --task meg \
         --data_path "${EVAL_DIR}" \
+        --output_dir "${OUTPUT_DIR}" \
         --save_predictions \
         "${REVISION_ARGS[@]}" \
         --fast

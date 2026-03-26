@@ -52,7 +52,10 @@ def _postprocess_story_feature(
     hrf: np.ndarray,
     ref_length: int,
 ) -> np.ndarray:
-    feature_path = os.path.join(feature_root, f"story_{story_id}.mat")
+    feature_path = os.path.join(feature_root, f"sentence_feature_story_{story_id}.mat")
+    if not os.path.exists(feature_path):
+        # Backward compatibility with previously generated sentence feature names.
+        feature_path = os.path.join(feature_root, f"story_{story_id}.mat")
     raw_feature = scio.loadmat(feature_path)["data"].astype(np.float32)
 
     time_info = scio.loadmat(
@@ -91,8 +94,7 @@ def _postprocess_story_feature(
     return _zs(processed).astype(np.float32)
 
 
-def _load_feature_matrix(data_path: str, model_name: str, story_amount: int) -> torch.FloatTensor:
-    feature_root = os.path.join(data_path, "word_features", model_name)
+def _load_feature_matrix(feature_root: str, data_path: str, story_amount: int) -> torch.FloatTensor:
     if not os.path.isdir(feature_root):
         raise FileNotFoundError(f"Feature directory not found: {feature_root}. Please run inference first.")
 
@@ -108,18 +110,22 @@ def _load_feature_matrix(data_path: str, model_name: str, story_amount: int) -> 
 
 
 def _resolve_mask_path(mask_root: str, roi: str, sub: str, model_name: str) -> str:
-    candidate = os.path.join(mask_root, roi, f"sub_{sub}_{model_name}_mask.mat")
+    candidate = os.path.join(mask_root, roi, f"sub_{sub}_gpt2_layer12_mask.mat")
     if os.path.exists(candidate):
         return candidate
-    raise FileNotFoundError(f"No voxel mask found for ROI={roi}, subject={sub}, model={model_name}")
+    raise FileNotFoundError(
+        f"No voxel mask found for ROI={roi}, subject={sub}, expected=sub_{sub}_gpt2_layer12_mask.mat"
+    )
 
 
 def eval_fmri(args: ArgumentParser):
     data_path = str(args.data_path)
+    output_root = str(args.output_dir)
     model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
+    model_root = os.path.join(output_root, model_name)
 
     story_amount = FAST_STORY_COUNT if args.fast else 60
-    feature_matrix = _load_feature_matrix(data_path, model_name, story_amount)
+    feature_matrix = _load_feature_matrix(model_root, data_path, story_amount)
 
     roi_types = ["Cognition", "Language", "Manipulation", "Memory", "Reward", "Vision"]
     subs = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
@@ -130,7 +136,7 @@ def eval_fmri(args: ArgumentParser):
 
     fmri_root = os.path.join(data_path, "fmri")
     mask_root = os.path.join(data_path, "mask", "vox_select_RSA")
-    result_root = os.path.join(data_path, "results", "fmri", model_name)
+    result_root = os.path.join(model_root, "results", "fmri")
 
     for roi in roi_types:
         roi_result_dir = os.path.join(result_root, roi)

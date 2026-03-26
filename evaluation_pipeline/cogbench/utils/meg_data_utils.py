@@ -105,7 +105,9 @@ def load_feature(feature_path, PU_path, sess, noexist=[], is_zs=True):
     train_feature = torch.FloatTensor([])
     starts = [0]
     for i in tqdm(sess, desc='loading stimulus from '+feature_path+' ...'):
-        feature_file = feature_path + '/story_'+str(i)+'.mat'
+        feature_file = feature_path + '/sentence_feature_story_'+str(i)+'.mat'
+        if not os.path.exists(feature_file):
+            feature_file = feature_path + '/story_'+str(i)+'.mat'
         if i in noexist:
             continue
         data = scio.loadmat(feature_file)
