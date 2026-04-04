@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from ..utils.utils import get_model_and_tokenizer
+from ..utils.utils import forward_for_representations, get_model_and_tokenizer
 
 
 MIN_WORDS = 80000
@@ -15,6 +15,7 @@ REMOVE_EDGE_CHARS = True
 USE_STANDARDIZATION = True
 CHINESE_JSON_REL_PATH = os.path.join("eye_tracking", "eye_features_sentence_level.json")
 INFER_CACHE_FILENAME = "eye_tracking_infer_cache.npz"
+ERROR_LOG_FILENAME = "eye_tracking_failed_samples.jsonl"
 FAST_MAX_SENTENCES = 10
 FAST_MIN_WORDS = 500
 
@@ -103,9 +104,23 @@ def calculate_word_output_sent(model_outputs: torch.Tensor, split_words_list: li
 
 
 def get_num_layers(model):
-	if not model.config.is_encoder_decoder:
-		return model.config.num_hidden_layers
-	return model.config.encoder_layers + model.config.decoder_layers
+	config = model.config
+	if not config.is_encoder_decoder:
+		for attr in ("num_hidden_layers", "n_layer", "num_layers"):
+			if hasattr(config, attr):
+				return int(getattr(config, attr))
+		raise AttributeError("Cannot infer number of hidden layers for decoder/encoder-only model config.")
+
+	for attr in ("encoder_layers", "num_encoder_layers", "num_layers"):
+		if hasattr(config, attr):
+			return int(getattr(config, attr))
+
+	if hasattr(model, "get_encoder"):
+		encoder = model.get_encoder()
+		if hasattr(encoder, "block"):
+			return int(len(encoder.block))
+
+	raise AttributeError("Cannot infer number of encoder layers for encoder-decoder model config.")
 
 
 def _resolve_eye_tracking_json(data_path: str) -> str:
@@ -116,7 +131,27 @@ def _load_entries(json_path: str) -> list[dict]:
 	with open(json_path, "r", encoding="utf-8") as f:
 		data = json.load(f)
 
-	return list(data.values())
+	entries = []
+	for entry_key, entry_value in data.items():
+		if not isinstance(entry_value, dict):
+			continue
+
+		entry = dict(entry_value)
+		entry["_entry_key"] = str(entry_key)
+		entries.append(entry)
+
+	return entries
+
+
+def _entry_data_path(entry: dict, json_path: str) -> str:
+	for key in ["data_path", "path", "file_path", "file", "source_path", "source_file"]:
+		value = entry.get(key)
+		if isinstance(value, str) and value:
+			return value
+
+	entry_key = entry.get("_entry_key", "unknown")
+	entry_num = entry.get("num", "unknown")
+	return f"{json_path}#entry_key={entry_key},num={entry_num}"
 
 
 def _word_spans(sentence: str, words: list[str]) -> list[tuple[int, int]]:
@@ -145,7 +180,7 @@ def _map_words_to_tokens(offsets: list[tuple[int, int]], spans: list[tuple[int, 
 	return token_indices
 
 
-def _sentence_features(entry: dict, tokenizer, model, n_layer: int):
+def _sentence_features(entry: dict, tokenizer, model, n_layer: int, backend: str | None = None):
 	sentence = entry["content"]
 	all_split = entry["all_split"]
 	split_features = entry["split_features"]
@@ -159,7 +194,7 @@ def _sentence_features(entry: dict, tokenizer, model, n_layer: int):
 	offsets = [tuple(x) for x in encoded.pop("offset_mapping")[0].tolist()]
 	encoded = {k: v.to(model.device) for k, v in encoded.items()}
 
-	model_outputs = model(**encoded, output_hidden_states=True).hidden_states
+	model_outputs = forward_for_representations(model, encoded, backend=backend).hidden_states
 
 	layer_word_outputs = None
 	eye_matrix_merged = None
@@ -183,15 +218,13 @@ def _sentence_features(entry: dict, tokenizer, model, n_layer: int):
 		spans = _word_spans(sentence, split_words)
 		word_to_token = _map_words_to_tokens(offsets, spans)
 
-		layer_dict = {}
-		for layer_idx in range(n_layer):
-			_, word_outputs = calculate_word_output_sent(
-				model_outputs=model_outputs[layer_idx + 1],
-				split_words_list=split_words,
-				output_index=word_to_token,
-				valid_index=valid_index,
-			)
-			layer_dict[layer_idx] = word_outputs
+		_, word_outputs = calculate_word_output_sent(
+			model_outputs=model_outputs[-1],
+			split_words_list=split_words,
+			output_index=word_to_token,
+			valid_index=valid_index,
+		)
+		layer_dict = {0: word_outputs}
 
 		layer_word_outputs = merge_layer_output(layer_dict, layer_word_outputs)
 		eye_matrix_merged = merge_eye_matrix(eye_matrix, eye_matrix_merged)
@@ -206,6 +239,7 @@ def infer_eye_tracking(
 	save_predictions: bool = True,
 	revision_name: str | None = None,
 	fast: bool = False,
+	backend: str | None = None,
 ):
 	model_name = os.path.basename(os.path.normpath(model_path_or_name))
 	if output_dir is None:
@@ -221,21 +255,35 @@ def infer_eye_tracking(
 		entries = entries[:FAST_MAX_SENTENCES]
 		min_words = FAST_MIN_WORDS
 
-	model, tokenizer = get_model_and_tokenizer(model_path_or_name, revision_name=revision_name)
-	n_layer = get_num_layers(model)
+	model, tokenizer = get_model_and_tokenizer(model_path_or_name, revision_name=revision_name, backend=backend)
+	n_layer = 1
 
 	merged_layers = None
 	merged_eye = None
+	failed_samples = []
 
 	start = time.time()
 
 	for entry in tqdm(entries, desc="eye_tracking inference", unit="sent"):
-		layer_dict, eye_matrix = _sentence_features(
-			entry=entry,
-			tokenizer=tokenizer,
-			model=model,
-			n_layer=n_layer,
-		)
+		try:
+			layer_dict, eye_matrix = _sentence_features(
+				entry=entry,
+				tokenizer=tokenizer,
+				model=model,
+				n_layer=n_layer,
+				backend=backend,
+			)
+		except Exception as exc:
+			failed_samples.append(
+				{
+					"data_path": _entry_data_path(entry, json_path),
+					"entry_key": entry.get("_entry_key"),
+					"num": entry.get("num"),
+					"content": entry.get("content", "")[:200],
+					"error": str(exc),
+				}
+			)
+			continue
 
 		if layer_dict is None:
 			continue
@@ -270,8 +318,19 @@ def infer_eye_tracking(
 		"remove_edge_chars": REMOVE_EDGE_CHARS,
 		"num_layers": n_layer,
 		"total_content_words": total_content_words,
+		"failed_samples": int(len(failed_samples)),
 		"elapsed_seconds": elapsed,
 	}
+
+	if failed_samples:
+		result_dir = os.path.join(output_dir, "results", "eye_tracking")
+		os.makedirs(result_dir, exist_ok=True)
+		error_log_path = os.path.join(result_dir, ERROR_LOG_FILENAME)
+		with open(error_log_path, "w", encoding="utf-8") as f:
+			for item in failed_samples:
+				f.write(json.dumps(item, ensure_ascii=False) + "\n")
+		report["failed_samples_log_path"] = error_log_path
+		print(f"saved failed samples log: {error_log_path}")
 
 	if save_predictions:
 		result_dir = os.path.join(output_dir, "results", "eye_tracking")

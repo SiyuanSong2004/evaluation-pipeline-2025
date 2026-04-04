@@ -40,7 +40,8 @@ def eval_meg(args: ArgumentParser):
     os.makedirs(result_root, exist_ok=True)
     is_zs = False
 
-    feat_key = os.path.basename(feature_root)
+    # MATLAB struct field names must be <= 31 chars for compatibility.
+    feat_key = "feat"
 
     for start in starts:
         end = start + 1

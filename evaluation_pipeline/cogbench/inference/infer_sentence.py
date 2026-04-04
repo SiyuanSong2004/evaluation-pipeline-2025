@@ -7,7 +7,7 @@ from typing import List
 import numpy as np
 import scipy.io as scio
 import torch
-from ..utils.utils import get_model_and_tokenizer, DEVICE
+from ..utils.utils import DEVICE, forward_for_representations, get_model_and_tokenizer
 
 
 BATCH_SIZE = 64
@@ -61,11 +61,24 @@ def encode_words_mean_pool(
 	tokenizer,
 	model,
 	layer_index: int,
+	backend: str | None = None,
 ) -> np.ndarray:
 	all_word_reprs = []
 	special = tokenizer.num_special_tokens_to_add(pair=False)
-	model_max_len = getattr(model.config, "max_position_embeddings", tokenizer.model_max_length)
-	max_len = int(min(tokenizer.model_max_length, model_max_len))
+	tokenizer_max_len = int(getattr(tokenizer, "model_max_length", 512))
+	if tokenizer_max_len > 100000:
+		tokenizer_max_len = 512
+
+	model_max_len = getattr(model.config, "max_position_embeddings", None)
+	if model_max_len is None and (backend in {"enc_dec_mask", "enc_dec_prefix"} or getattr(model.config, "is_encoder_decoder", False)):
+		encoder = model.get_encoder() if hasattr(model, "get_encoder") else getattr(model, "encoder", None)
+		if encoder is not None:
+			model_max_len = getattr(encoder.config, "max_position_embeddings", None)
+
+	if model_max_len is None:
+		max_len = tokenizer_max_len
+	else:
+		max_len = int(min(tokenizer_max_len, int(model_max_len)))
 	max_content_tokens = max(1, max_len - special)
 
 	for line_words in words_per_line:
@@ -74,13 +87,14 @@ def encode_words_mean_pool(
 				words,
 				is_split_into_words=True,
 				return_tensors="pt",
-				truncation=False,
+				truncation=True,
+				max_length=max_len,
 			)
 			word_ids = encoded_cpu.word_ids(batch_index=0)
 			encoded = {key: value.to(DEVICE) for key, value in encoded_cpu.items()}
 
 			with torch.inference_mode():
-				outputs = model(**encoded, output_hidden_states=True)
+				outputs = forward_for_representations(model, encoded, backend=backend)
 			hidden = outputs.hidden_states[layer_index][0]
 
 			for word_idx in range(len(words)):
@@ -105,6 +119,7 @@ def infer_sentence(
 	save_predictions: bool = True,
 	revision_name: str | None = None,
 	layer_index: int = -1,
+	backend: str | None = None,
 ):
 	model_name = os.path.basename(os.path.normpath(model_path_or_name))
 	if output_dir is None:
@@ -117,7 +132,7 @@ def infer_sentence(
 	if not story_files:
 		raise FileNotFoundError(f"No story files found in: {script_dir}")
 
-	model, tokenizer = get_model_and_tokenizer(model_path_or_name, revision_name=revision_name)
+	model, tokenizer = get_model_and_tokenizer(model_path_or_name, revision_name=revision_name, backend=backend)
 
 	for story_file in story_files:
 		story_id = parse_story_id(story_file)
@@ -127,6 +142,7 @@ def infer_sentence(
 			tokenizer=tokenizer,
 			model=model,
 			layer_index=layer_index,
+			backend=backend,
 		)
 
 		if save_predictions:

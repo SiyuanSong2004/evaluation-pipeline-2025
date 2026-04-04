@@ -10,6 +10,8 @@ import scipy.io as sio
 from .infer import infer
 from .eval import eval
 
+BACKEND_CHOICES = ["mlm", "causal", "mntp", "enc_dec_mask", "enc_dec_prefix"]
+
 def _parse_arguments():
     parser = argparse.ArgumentParser()
 
@@ -17,11 +19,30 @@ def _parse_arguments():
     parser.add_argument("--data_path", required=True, type=pathlib.Path, help="Path to the data directory")
     parser.add_argument("--task", required=True, type=str, help="The task that is being evaluated.", choices=["word_fmri", "fmri", "meg", "eye_tracking"])
     parser.add_argument("--model_path_or_name", required=True, type=str, help="Path to the model to evaluate.")
+    parser.add_argument(
+        "--backend",
+        default="causal",
+        type=str,
+        help="Model architecture backend label (kept consistent with zero-shot entry).",
+        choices=BACKEND_CHOICES,
+    )
     parser.add_argument("--output_dir", default="results", type=pathlib.Path, help="Path to the data directory")
     parser.add_argument("--revision_name", default=None, type=str, help="Name of the checkpoint/version of the model to test. (If None, the main will be used)")
 
     parser.add_argument("--save_predictions", default=False, action="store_true", help="Whether or not to save predictions.")
     parser.add_argument("--fast", default=False, action="store_true", help="Enable fast evaluation mode.")
+    parser.add_argument(
+        "--eye_max_words",
+        default=None,
+        type=int,
+        help="Optional cap for eye-tracking evaluation words to avoid O(n^2) blow-up.",
+    )
+    parser.add_argument(
+        "--eye_sample_seed",
+        default=42,
+        type=int,
+        help="Random seed used when eye-tracking word subsampling is enabled.",
+    )
 
     return parser.parse_args()
 

@@ -7,6 +7,7 @@ REVISION_NAME=${REVISION_NAME:-""}
 EVAL_DIR="evaluation_data/cogbench"
 TASKS="word_fmri,fmri,meg,eye_tracking"
 OUTPUT_DIR=${OUTPUT_DIR:-"$PWD"}
+BACKEND=${BACKEND:-"causal"}
 
 # Parse command-line arguments.
 while [[ $# -gt 0 ]]; do
@@ -31,8 +32,12 @@ while [[ $# -gt 0 ]]; do
             TASKS="$2"
             shift 2
             ;;
+        --backend)
+            BACKEND="$2"
+            shift 2
+            ;;
         -h|--help)
-            echo "Usage: bash eval_cogbench_fast.sh --model_path <path_or_hf_name> [--task word_fmri|fmri|meg|comma_list] [--eval_dir <path>] [--output_dir <path, default: current directory>] [--revision_name <name>]"
+            echo "Usage: bash eval_cogbench_fast.sh --model_path <path_or_hf_name> [--backend mlm|causal|mntp|enc_dec_mask|enc_dec_prefix] [--task word_fmri|fmri|meg|comma_list] [--eval_dir <path>] [--output_dir <path, default: current directory>] [--revision_name <name>]"
             exit 0
             ;;
         *)
@@ -41,6 +46,14 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+case "$BACKEND" in
+    mlm|causal|mntp|enc_dec_mask|enc_dec_prefix) ;;
+    *)
+        echo "Error: unsupported backend '$BACKEND'. Expected one of: mlm, causal, mntp, enc_dec_mask, enc_dec_prefix"
+        exit 1
+        ;;
+esac
 
 if [[ -z "$MODEL_PATH" ]]; then
     echo "Error: model path is required. Use --model_path <path_or_hf_name>."
@@ -59,6 +72,7 @@ fi
 if [[ "$TASKS" == *",word_fmri,"* ]]; then
     python -m evaluation_pipeline.cogbench.run \
         --model_path_or_name "$MODEL_PATH" \
+        --backend "$BACKEND" \
         --task word_fmri \
         --data_path "${EVAL_DIR}" \
         --output_dir "${OUTPUT_DIR}" \
@@ -70,6 +84,7 @@ fi
 if [[ "$TASKS" == *",fmri,"* ]]; then
     python -m evaluation_pipeline.cogbench.run \
         --model_path_or_name "$MODEL_PATH" \
+        --backend "$BACKEND" \
         --task fmri \
         --data_path "${EVAL_DIR}" \
         --output_dir "${OUTPUT_DIR}" \
@@ -81,6 +96,7 @@ fi
 if [[ "$TASKS" == *",meg,"* ]]; then
     python -m evaluation_pipeline.cogbench.run \
         --model_path_or_name "$MODEL_PATH" \
+        --backend "$BACKEND" \
         --task meg \
         --data_path "${EVAL_DIR}" \
         --output_dir "${OUTPUT_DIR}" \
@@ -92,6 +108,7 @@ fi
 if [[ "$TASKS" == *",eye_tracking,"* ]]; then
     python -m evaluation_pipeline.cogbench.run \
         --model_path_or_name "$MODEL_PATH" \
+        --backend "$BACKEND" \
         --task eye_tracking \
         --data_path "${EVAL_DIR}" \
         --output_dir "${OUTPUT_DIR}" \

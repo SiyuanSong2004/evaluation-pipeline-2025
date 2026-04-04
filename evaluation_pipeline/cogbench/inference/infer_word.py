@@ -5,7 +5,7 @@ import os
 import numpy as np
 import torch
 
-from ..utils.utils import DEVICE, get_model_and_tokenizer
+from ..utils.utils import DEVICE, forward_for_representations, get_model_and_tokenizer
 
 
 
@@ -36,7 +36,7 @@ def _mean_pool_last_hidden(last_hidden_state, attention_mask=None):
 	return masked_hidden.sum(dim=1) / token_count
 
 
-def extract_word_features(words, model, tokenizer, batch_size=BATCH_SIZE):
+def extract_word_features(words, model, tokenizer, batch_size=BATCH_SIZE, backend: str | None = None):
 	if tokenizer.pad_token is None and tokenizer.eos_token is not None:
 		tokenizer.pad_token = tokenizer.eos_token
 
@@ -52,7 +52,7 @@ def extract_word_features(words, model, tokenizer, batch_size=BATCH_SIZE):
 		inputs = {key: value.to(DEVICE) for key, value in inputs.items()}
 
 		with torch.inference_mode():
-			outputs = model(**inputs)
+			outputs = forward_for_representations(model, inputs, backend=backend)
 
 		pooled = _mean_pool_last_hidden(outputs.last_hidden_state, inputs.get("attention_mask"))
 		pooled = pooled.to(dtype=torch.float32).detach().cpu().numpy()
@@ -69,6 +69,7 @@ def infer_word(
 	output_root: str | None = None,
 	save_predictions: bool = SAVE_PREDICTIONS,
 	revision_name: str | None = None,
+	backend: str | None = None,
 ):
 	root_path = _resolve_cogbench_root(datapath)
 	model_name = os.path.basename(os.path.normpath(model_path_or_name))
@@ -76,8 +77,8 @@ def infer_word(
 	with open(data_path, "r", encoding="utf-8") as f:
 		words = f.read().splitlines()
 
-	model, tokenizer = get_model_and_tokenizer(model_path_or_name, revision_name=revision_name)
-	word_features = extract_word_features(words, model, tokenizer)
+	model, tokenizer = get_model_and_tokenizer(model_path_or_name, revision_name=revision_name, backend=backend)
+	word_features = extract_word_features(words, model, tokenizer, backend=backend)
 
 	if save_predictions:
 		persist_root = output_root if output_root is not None else root_path

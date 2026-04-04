@@ -86,53 +86,66 @@ def load_feature(feature_path, story_amount=60, language='zh'):
         
     return train_feature, starts
 
-def ridge_multidim(train_fmri, train_feature, valid_fmri, valid_feature, alphas,
-            cuda0=0, cuda1=1, use_cuda=False, singcutoff=1e-10):
+def ridge_multidim(
+    train_fmri,
+    train_feature,
+    valid_fmri,
+    valid_feature,
+    alphas,
+    use_cuda=False,
+    singcutoff=1e-10,
+):
     """
     this function can be used on features with more than 1 dimension, 
     such as word embeddings (BERT, elmo, etc.), pos tags, 
     or other semantic features
     """
     
-    U,S,V = torch.svd(train_feature) #cuda 1
+    if use_cuda and torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    train_feature = train_feature.to(device)
+    train_fmri = train_fmri.to(device)
+    valid_feature = valid_feature.to(device)
+    valid_fmri = valid_fmri.to(device)
+
+    U, S, Vh = torch.linalg.svd(train_feature, full_matrices=False)
+    V = Vh.transpose(0, 1)
     
     ngoodS = torch.sum(S>singcutoff)
     U = U[:,:ngoodS]
     S = S[:ngoodS]
     V = V[:,:ngoodS]
 
-    if use_cuda:
-        alphas = torch.tensor(alphas).cuda(cuda0)
-    else:
-        alphas = torch.tensor(alphas)
-
-    if use_cuda:
-        UR = torch.matmul(U.transpose(0, 1).cuda(cuda1), train_fmri).cuda(cuda0)
-        PVh = torch.matmul(valid_feature, V)
-    else:
-        UR = torch.matmul(U.transpose(0, 1), train_fmri)
-        PVh = torch.matmul(valid_feature, V)
+    alphas = torch.tensor(alphas, device=device, dtype=train_feature.dtype)
+    UR = torch.matmul(U.transpose(0, 1), train_fmri)
+    PVh = torch.matmul(valid_feature, V)
 
     zvalid_fmri = zs(valid_fmri)
     Rcorrs = [] ## Holds training correlations for each alpha
     for a in alphas:
         D = S/(S**2+a**2) ## Reweight singular vectors by the ridge parameter
-        if use_cuda:
-            pred = torch.matmul(mult_diag(D, PVh, left=False), UR)
-        else:
-            pred = torch.matmul(mult_diag(D, PVh, left=False), UR)
+        pred = torch.matmul(mult_diag(D, PVh, left=False), UR)
         Rcorr = (zvalid_fmri*zs(pred)).mean(0)                
         Rcorr[torch.isnan(Rcorr)] = 0
         Rcorrs.append(Rcorr)
     
     return Rcorrs
 
-def ridge_nested_cv(total_fmri, total_feature, result_dir, sub):
+def ridge_nested_cv(total_fmri, total_feature, result_dir, sub, use_cuda=None):
     """ 
     nested cross-validation, which is applicable to situations without
     designated test set
     Return: corrs on all out test set
     """
+    if use_cuda is None:
+        use_cuda = torch.cuda.is_available()
+
+    device = torch.device("cuda" if use_cuda and torch.cuda.is_available() else "cpu")
+    print(f"ridge_nested_cv device: {device}")
+
     alphas = np.logspace(-3, 3, 10)
     nTR, n_dim = total_feature.shape
     foldlen = int(nTR/5)
@@ -155,7 +168,14 @@ def ridge_nested_cv(total_fmri, total_feature, result_dir, sub):
             valid_fmri = total_fmri[val_inds]
             train_feature = total_feature[train_inds]
             valid_feature = total_feature[val_inds]
-            Rcorrs = ridge_multidim(train_fmri, train_feature, valid_fmri, valid_feature, alphas)
+            Rcorrs = ridge_multidim(
+                train_fmri,
+                train_feature,
+                valid_fmri,
+                valid_feature,
+                alphas,
+                use_cuda=use_cuda,
+            )
             '''if n_dim == 1:
                 Rcorrs = self.ridge_1dim(train_fmri, train_feature, valid_fmri, valid_feature, self.alphas)
             else:
@@ -165,9 +185,16 @@ def ridge_nested_cv(total_fmri, total_feature, result_dir, sub):
         val_corrs = torch.stack(val_corrs)  
         max_ind = torch.argmax(val_corrs.mean(2).mean(0))
         bestalpha = alphas[max_ind]  
-        U,S,V = torch.svd(total_feature[inner_inds])
-        UR = torch.matmul(U.transpose(0, 1), total_fmri[inner_inds])
-        wt = reduce(torch.matmul, [V, torch.diag(S/(S**2+bestalpha**2)), UR])
+        inner_feature = total_feature[inner_inds].to(device)
+        inner_fmri = total_fmri[inner_inds].to(device)
+        test_feature = test_feature.to(device)
+        test_fmri = test_fmri.to(device)
+
+        U, S, Vh = torch.linalg.svd(inner_feature, full_matrices=False)
+        V = Vh.transpose(0, 1)
+        UR = torch.matmul(U.transpose(0, 1), inner_fmri)
+        bestalpha_t = torch.tensor(bestalpha, dtype=S.dtype, device=device)
+        wt = reduce(torch.matmul, [V, torch.diag(S/(S**2+bestalpha_t**2)), UR])
         pred = torch.matmul(test_feature, wt)
         corrs = (zs(pred)*zs(test_fmri)).mean(0)
         test_corrs.append(corrs)
