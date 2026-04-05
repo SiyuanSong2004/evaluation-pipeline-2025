@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 
 import numpy as np
@@ -52,21 +53,26 @@ def get_eye_features_matrix(split_feature, valid_num, valid_index, features=None
 
 def find_valid_words(sentence_split):
 	num_words = len(sentence_split)
+	if num_words == 0:
+		return []
+
 	valid_index = [True for _ in range(num_words)]
 
 	left_ignore_char = 0
 	idx = 0
-	while left_ignore_char < 3:
+	while left_ignore_char < 3 and idx < num_words:
 		valid_index[idx] = False
 		left_ignore_char += len(sentence_split[idx])
 		idx += 1
 
 	right_ignore_char = 0
 	idx = num_words - 1
-	while right_ignore_char < 3:
+	while right_ignore_char < 3 and idx >= 0:
 		if sentence_split[idx] == "。":
 			valid_index[idx] = False
 			idx -= 1
+			if idx < 0:
+				break
 
 		valid_index[idx] = False
 		right_ignore_char += len(sentence_split[idx])
@@ -154,14 +160,29 @@ def _entry_data_path(entry: dict, json_path: str) -> str:
 	return f"{json_path}#entry_key={entry_key},num={entry_num}"
 
 
+def _normalize_word_for_alignment(word: str) -> str:
+	# Remove all whitespace in split tokens, e.g., " 质" -> "质".
+	return re.sub(r"\s+", "", word)
+
+
 def _word_spans(sentence: str, words: list[str]) -> list[tuple[int, int]]:
 	spans = []
 	cursor = 0
 	for word in words:
-		start = sentence.find(word, cursor)
+		normalized_word = _normalize_word_for_alignment(word)
+		if not normalized_word:
+			spans.append((-1, -1))
+			continue
+
+		start = sentence.find(normalized_word, cursor)
 		if start == -1:
-			raise ValueError(f"Cannot align word '{word}' in sentence: {sentence}")
-		end = start + len(word)
+			# Fallback to global search in case sentence-level cursor got desynced.
+			start = sentence.find(normalized_word)
+		if start == -1:
+			spans.append((-1, -1))
+			continue
+
+		end = start + len(normalized_word)
 		spans.append((start, end))
 		cursor = end
 	return spans
@@ -170,6 +191,10 @@ def _word_spans(sentence: str, words: list[str]) -> list[tuple[int, int]]:
 def _map_words_to_tokens(offsets: list[tuple[int, int]], spans: list[tuple[int, int]]) -> list[list[int]]:
 	token_indices = []
 	for ws, we in spans:
+		if ws < 0 or we <= ws:
+			token_indices.append([])
+			continue
+
 		hits = []
 		for tok_i, (ts, te) in enumerate(offsets):
 			if te <= ts:
@@ -178,6 +203,20 @@ def _map_words_to_tokens(offsets: list[tuple[int, int]], spans: list[tuple[int, 
 				hits.append(tok_i)
 		token_indices.append(hits)
 	return token_indices
+
+
+def _get_split_feature(split_features, split_idx: int):
+	if isinstance(split_features, dict):
+		if str(split_idx) in split_features:
+			return split_features[str(split_idx)]
+		if split_idx in split_features:
+			return split_features[split_idx]
+		raise KeyError(f"Missing split_features for split index: {split_idx}")
+
+	if isinstance(split_features, list):
+		return split_features[split_idx]
+
+	raise TypeError(f"Unsupported split_features type: {type(split_features)}")
 
 
 def _sentence_features(entry: dict, tokenizer, model, n_layer: int, backend: str | None = None):
@@ -205,7 +244,14 @@ def _sentence_features(entry: dict, tokenizer, model, n_layer: int, backend: str
 		if valid_num < VALID_MIN:
 			continue
 
-		split_feature = split_features[str(split_idx)]
+		spans = _word_spans(sentence, split_words)
+		word_to_token = _map_words_to_tokens(offsets, spans)
+		valid_index = [keep and bool(word_to_token[idx]) for idx, keep in enumerate(valid_index)]
+		valid_num, valid_index = find_vocab_word(split_words, valid_index=valid_index)
+		if valid_num < VALID_MIN:
+			continue
+
+		split_feature = _get_split_feature(split_features, split_idx)
 		eye_matrix = get_eye_features_matrix(
 			split_feature=split_feature,
 			valid_num=valid_num,
@@ -214,9 +260,6 @@ def _sentence_features(entry: dict, tokenizer, model, n_layer: int, backend: str
 
 		if eye_matrix.size == 0 or np.any(np.sum(eye_matrix, axis=0) == 0):
 			continue
-
-		spans = _word_spans(sentence, split_words)
-		word_to_token = _map_words_to_tokens(offsets, spans)
 
 		_, word_outputs = calculate_word_output_sent(
 			model_outputs=model_outputs[-1],
@@ -295,7 +338,24 @@ def infer_eye_tracking(
 			break
 
 	if merged_layers is None or merged_eye is None:
-		raise ValueError("No valid eye-tracking samples were extracted.")
+		report_dir = os.path.join(output_dir, "results", "eye_tracking")
+		os.makedirs(report_dir, exist_ok=True)
+		if failed_samples:
+			error_log_path = os.path.join(report_dir, ERROR_LOG_FILENAME)
+			with open(error_log_path, "w", encoding="utf-8") as f:
+				for item in failed_samples:
+					f.write(json.dumps(item, ensure_ascii=False) + "\n")
+			sample_errors = "; ".join(item.get("error", "") for item in failed_samples[:3])
+			raise ValueError(
+				f"No valid eye-tracking samples were extracted. "
+				f"failed={len(failed_samples)}, see {error_log_path}. "
+				f"examples: {sample_errors}"
+			)
+
+		raise ValueError(
+			"No valid eye-tracking samples were extracted (no exception entries). "
+			"This usually means all samples were filtered by validity checks."
+		)
 
 	layer_arrays = {
 		f"layer_{layer_idx}": np.asarray(merged_layers[layer_idx], dtype=np.float32)

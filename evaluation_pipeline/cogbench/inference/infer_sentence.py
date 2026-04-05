@@ -71,9 +71,19 @@ def encode_words_mean_pool(
 
 	model_max_len = getattr(model.config, "max_position_embeddings", None)
 	if model_max_len is None and (backend in {"enc_dec_mask", "enc_dec_prefix"} or getattr(model.config, "is_encoder_decoder", False)):
+		max_candidates = []
 		encoder = model.get_encoder() if hasattr(model, "get_encoder") else getattr(model, "encoder", None)
+		decoder = model.get_decoder() if hasattr(model, "get_decoder") else getattr(model, "decoder", None)
 		if encoder is not None:
-			model_max_len = getattr(encoder.config, "max_position_embeddings", None)
+			enc_max = getattr(encoder.config, "max_position_embeddings", None)
+			if enc_max is not None:
+				max_candidates.append(int(enc_max))
+		if decoder is not None:
+			dec_max = getattr(decoder.config, "max_position_embeddings", None)
+			if dec_max is not None:
+				max_candidates.append(int(dec_max))
+		if max_candidates:
+			model_max_len = min(max_candidates)
 
 	if model_max_len is None:
 		max_len = tokenizer_max_len

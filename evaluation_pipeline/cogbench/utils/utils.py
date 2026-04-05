@@ -1,4 +1,5 @@
 import torch
+from types import SimpleNamespace
 from transformers import AutoModel, AutoModelForSeq2SeqLM, AutoTokenizer
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -45,10 +46,26 @@ def get_model_and_tokenizer(model_path_or_name: str, revision_name: str | None =
 def forward_for_representations(model, inputs: dict, backend: str | None = None):
 	"""Run a model forward pass for hidden-state extraction across architectures.
 
-	For encoder-decoder models, use encoder outputs to avoid requiring decoder inputs.
+	For encoder-decoder models, use decoder outputs as the representation source.
 	"""
 	if backend in ENC_DEC_BACKENDS or getattr(model.config, "is_encoder_decoder", False):
-		encoder = model.get_encoder() if hasattr(model, "get_encoder") else model.encoder
-		return encoder(**inputs, output_hidden_states=True, return_dict=True)
+		forward_kwargs = dict(inputs)
+		forward_kwargs["decoder_input_ids"] = inputs["input_ids"]
+		if "attention_mask" in inputs:
+			forward_kwargs["decoder_attention_mask"] = inputs["attention_mask"]
+
+		outputs = model(**forward_kwargs, output_hidden_states=True, return_dict=True)
+
+		decoder_hidden_states = getattr(outputs, "decoder_hidden_states", None)
+		decoder_last_hidden_state = getattr(outputs, "decoder_last_hidden_state", None)
+		if decoder_hidden_states is None:
+			decoder_hidden_states = getattr(outputs, "hidden_states", None)
+		if decoder_last_hidden_state is None and decoder_hidden_states is not None:
+			decoder_last_hidden_state = decoder_hidden_states[-1]
+
+		return SimpleNamespace(
+			hidden_states=decoder_hidden_states,
+			last_hidden_state=decoder_last_hidden_state,
+		)
 
 	return model(**inputs, output_hidden_states=True, return_dict=True)

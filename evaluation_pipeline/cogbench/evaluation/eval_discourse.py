@@ -1,5 +1,6 @@
 import os
 from argparse import ArgumentParser
+import re
 
 import h5py
 import numpy as np
@@ -7,13 +8,23 @@ import scipy.io as scio
 import torch
 from scipy.stats import gamma
 
-from ..utils.data_utils import load_fmri, ridge_nested_cv
+from ..utils.data_utils import ridge_nested_cv
 
 
 TR_SECONDS = 0.71
 TR_OVERSAMPLING = 71
 HRF_OFFSET_TRS = 19
 FAST_STORY_COUNT = 5
+
+
+def _available_story_ids(data_path: str) -> list[int]:
+    ref_root = os.path.join(data_path, "node_count_bu")
+    story_ids = []
+    for name in os.listdir(ref_root):
+        m = re.match(r"story_(\d+)\.mat$", name)
+        if m:
+            story_ids.append(int(m.group(1)))
+    return sorted(story_ids)
 
 
 def _spm_hrf(tr: float, oversampling: int, time_length: float = 32.0) -> np.ndarray:
@@ -35,10 +46,10 @@ def _zs(array: np.ndarray) -> np.ndarray:
     return (array - array.mean()) / std
 
 
-def _load_ref_tr_lengths(data_path: str, story_amount: int) -> list[int]:
+def _load_ref_tr_lengths(data_path: str, story_ids: list[int]) -> list[int]:
     ref_root = os.path.join(data_path, "node_count_bu")
     lengths = []
-    for story_id in range(1, story_amount + 1):
+    for story_id in story_ids:
         file_path = os.path.join(ref_root, f"story_{story_id}.mat")
         with h5py.File(file_path, "r") as handle:
             lengths.append(handle["word_feature"].shape[1])
@@ -94,16 +105,16 @@ def _postprocess_story_feature(
     return _zs(processed).astype(np.float32)
 
 
-def _load_feature_matrix(feature_root: str, data_path: str, story_amount: int) -> torch.FloatTensor:
+def _load_feature_matrix(feature_root: str, data_path: str, story_ids: list[int]) -> torch.FloatTensor:
     if not os.path.isdir(feature_root):
         raise FileNotFoundError(f"Feature directory not found: {feature_root}. Please run inference first.")
 
     hrf = _spm_hrf(TR_SECONDS, TR_OVERSAMPLING)
-    ref_lengths = _load_ref_tr_lengths(data_path, story_amount)
+    ref_lengths = _load_ref_tr_lengths(data_path, story_ids)
 
     all_features = []
-    for story_id in range(1, story_amount + 1):
-        processed = _postprocess_story_feature(feature_root, data_path, story_id, hrf, ref_lengths[story_id - 1])
+    for idx, story_id in enumerate(story_ids):
+        processed = _postprocess_story_feature(feature_root, data_path, story_id, hrf, ref_lengths[idx])
         all_features.append(torch.from_numpy(processed))
 
     return torch.cat(all_features, dim=0)
@@ -124,8 +135,12 @@ def eval_fmri(args: ArgumentParser):
     model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
     model_root = os.path.join(output_root, model_name)
 
-    story_amount = FAST_STORY_COUNT if args.fast else 60
-    feature_matrix = _load_feature_matrix(model_root, data_path, story_amount)
+    all_story_ids = _available_story_ids(data_path)
+    if not all_story_ids:
+        raise FileNotFoundError(f"No story_*.mat files found under: {os.path.join(data_path, 'node_count_bu')}")
+
+    story_ids = all_story_ids[:FAST_STORY_COUNT] if args.fast else all_story_ids
+    feature_matrix = _load_feature_matrix(model_root, data_path, story_ids)
 
     roi_types = ["Cognition", "Language", "Manipulation", "Memory", "Reward", "Vision"]
     subs = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
@@ -146,11 +161,22 @@ def eval_fmri(args: ArgumentParser):
             save_path = os.path.join(roi_result_dir, f"{sub}_average.mat")
 
             fmri_path = os.path.join(fmri_root, roi, sub)
-            fmri_response, _ = load_fmri(fmri_path, story_amount=story_amount)
+            fmri_story_blocks = []
+            for sid in story_ids:
+                story_file = os.path.join(fmri_path, f"story_{sid}.mat")
+                if not os.path.exists(story_file):
+                    continue
+                mat = scio.loadmat(story_file)
+                fmri_story_blocks.append(np.array(mat["fmri_response"].T))
+
+            if not fmri_story_blocks:
+                print(f"Skip ROI={roi}, sub={sub}: no selected fMRI story files found.")
+                continue
+
+            fmri_response = np.concatenate(fmri_story_blocks, axis=0)
 
             mask_path = _resolve_mask_path(mask_root, roi, sub, model_name)
             mask = scio.loadmat(mask_path)
-            fmri_response = np.array(fmri_response)
             fmri_response = fmri_response[:, np.where(mask["mask"] == 1)[1]]
             fmri_response = torch.from_numpy(fmri_response)
 
