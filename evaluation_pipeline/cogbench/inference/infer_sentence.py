@@ -21,6 +21,23 @@ def parse_story_id(path: str) -> int:
 	return int(match.group(1))
 
 
+def _collect_story_files(datapath: str) -> List[str]:
+	root_story_dir = os.path.join(datapath, "story")
+	root_files = sorted(glob.glob(os.path.join(root_story_dir, "story_*.txt")), key=parse_story_id)
+	if root_files:
+		return root_files
+
+	collected_by_id = {}
+	for split_name in ("train", "dev", "test"):
+		split_story_dir = os.path.join(datapath, split_name, "story")
+		for path in glob.glob(os.path.join(split_story_dir, "story_*.txt")):
+			story_id = parse_story_id(path)
+			if story_id not in collected_by_id:
+				collected_by_id[story_id] = path
+
+	return [collected_by_id[sid] for sid in sorted(collected_by_id.keys())]
+
+
 def read_words_per_line(path: str) -> List[List[str]]:
 	lines = []
 	with open(path, "r", encoding="utf-8") as f:
@@ -137,10 +154,12 @@ def infer_sentence(
 
 	os.makedirs(output_dir, exist_ok=True)
 
-	script_dir = os.path.join(datapath, "story")
-	story_files = sorted(glob.glob(os.path.join(script_dir, "story_*.txt")), key=parse_story_id)
+	story_files = _collect_story_files(datapath)
 	if not story_files:
-		raise FileNotFoundError(f"No story files found in: {script_dir}")
+		raise FileNotFoundError(
+			f"No story files found in: {os.path.join(datapath, 'story')} "
+			f"or in split dirs under {datapath}/{{train,dev,test}}/story"
+		)
 
 	model, tokenizer = get_model_and_tokenizer(model_path_or_name, revision_name=revision_name, backend=backend)
 

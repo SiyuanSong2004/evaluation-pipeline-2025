@@ -8,7 +8,7 @@ import scipy.io as scio
 import torch
 from scipy.stats import gamma
 
-from ..utils.data_utils import ridge_nested_cv
+from ..utils.data_utils import ridge_nested_cv, ridge_train_dev_test
 
 
 TR_SECONDS = 0.71
@@ -120,13 +120,34 @@ def _load_feature_matrix(feature_root: str, data_path: str, story_ids: list[int]
     return torch.cat(all_features, dim=0)
 
 
-def _resolve_mask_path(mask_root: str, roi: str, sub: str, model_name: str) -> str:
-    candidate = os.path.join(mask_root, roi, f"sub_{sub}_gpt2_layer12_mask.mat")
-    if os.path.exists(candidate):
-        return candidate
-    raise FileNotFoundError(
-        f"No voxel mask found for ROI={roi}, subject={sub}, expected=sub_{sub}_gpt2_layer12_mask.mat"
-    )
+def _resolve_split_dirs(data_path: str) -> dict[str, str] | None:
+    train_dir = os.path.join(data_path, "train")
+    dev_dir = os.path.join(data_path, "dev")
+    test_dir = os.path.join(data_path, "test")
+    if os.path.isdir(train_dir) and os.path.isdir(dev_dir):
+        return {
+            "train": train_dir,
+            "dev": dev_dir,
+            "test": test_dir if os.path.isdir(test_dir) else None,
+        }
+    return None
+
+
+def _load_split_fmri_response(split_path: str, roi: str, sub: str, story_ids: list[int]) -> torch.FloatTensor | None:
+    fmri_path = os.path.join(split_path, "fmri_dim128", roi, sub)
+    fmri_story_blocks = []
+    for sid in story_ids:
+        story_file = os.path.join(fmri_path, f"story_{sid}.mat")
+        if not os.path.exists(story_file):
+            continue
+        mat = scio.loadmat(story_file)
+        fmri_story_blocks.append(np.array(mat["fmri_response"].T))
+
+    if not fmri_story_blocks:
+        return None
+
+    fmri_response = np.concatenate(fmri_story_blocks, axis=0)
+    return torch.from_numpy(fmri_response)
 
 
 def eval_fmri(args: ArgumentParser):
@@ -135,12 +156,32 @@ def eval_fmri(args: ArgumentParser):
     model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
     model_root = os.path.join(output_root, model_name)
 
-    all_story_ids = _available_story_ids(data_path)
-    if not all_story_ids:
-        raise FileNotFoundError(f"No story_*.mat files found under: {os.path.join(data_path, 'node_count_bu')}")
+    split_dirs = _resolve_split_dirs(data_path)
 
-    story_ids = all_story_ids[:FAST_STORY_COUNT] if args.fast else all_story_ids
-    feature_matrix = _load_feature_matrix(model_root, data_path, story_ids)
+    if split_dirs is None:
+        all_story_ids = _available_story_ids(data_path)
+        if not all_story_ids:
+            raise FileNotFoundError(f"No story_*.mat files found under: {os.path.join(data_path, 'node_count_bu')}")
+
+        story_ids = all_story_ids[:FAST_STORY_COUNT] if args.fast else all_story_ids
+        feature_matrix = _load_feature_matrix(model_root, data_path, story_ids)
+    else:
+        split_story_ids = {}
+        split_features = {}
+        available_splits = ["train", "dev"]
+        if split_dirs["test"] is not None:
+            available_splits.append("test")
+        for split_name in available_splits:
+            split_path = split_dirs[split_name]
+            ids = _available_story_ids(split_path)
+            if not ids:
+                raise FileNotFoundError(
+                    f"No story_*.mat files found under: {os.path.join(split_path, 'node_count_bu')}"
+                )
+            if args.fast:
+                ids = ids[:FAST_STORY_COUNT]
+            split_story_ids[split_name] = ids
+            split_features[split_name] = _load_feature_matrix(model_root, split_path, ids)
 
     roi_types = ["Cognition", "Language", "Manipulation", "Memory", "Reward", "Vision"]
     subs = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
@@ -149,35 +190,78 @@ def eval_fmri(args: ArgumentParser):
         roi_types = roi_types[:1]
         subs = subs[:1]
 
-    fmri_root = os.path.join(data_path, "fmri")
-    mask_root = os.path.join(data_path, "mask", "vox_select_RSA")
-    result_root = os.path.join(model_root, "results", "fmri")
+    fmri_root = os.path.join(data_path, "fmri_dim128")
+    result_root = os.path.join(model_root, "results", "fmri128")
 
     for roi in roi_types:
         roi_result_dir = os.path.join(result_root, roi)
         os.makedirs(roi_result_dir, exist_ok=True)
 
         for sub in subs:
-            save_path = os.path.join(roi_result_dir, f"{sub}_average.mat")
+            if split_dirs is None:
+                fmri_path = os.path.join(fmri_root, roi, sub)
+                fmri_story_blocks = []
+                for sid in story_ids:
+                    story_file = os.path.join(fmri_path, f"story_{sid}.mat")
+                    if not os.path.exists(story_file):
+                        continue
+                    mat = scio.loadmat(story_file)
+                    fmri_story_blocks.append(np.array(mat["fmri_response"].T))
 
-            fmri_path = os.path.join(fmri_root, roi, sub)
-            fmri_story_blocks = []
-            for sid in story_ids:
-                story_file = os.path.join(fmri_path, f"story_{sid}.mat")
-                if not os.path.exists(story_file):
+                if not fmri_story_blocks:
+                    print(f"Skip ROI={roi}, sub={sub}: no selected fMRI story files found.")
                     continue
-                mat = scio.loadmat(story_file)
-                fmri_story_blocks.append(np.array(mat["fmri_response"].T))
 
-            if not fmri_story_blocks:
-                print(f"Skip ROI={roi}, sub={sub}: no selected fMRI story files found.")
+                fmri_response = np.concatenate(fmri_story_blocks, axis=0)
+                fmri_response = torch.from_numpy(fmri_response)
+                ridge_nested_cv(fmri_response, feature_matrix, roi_result_dir + "/", sub)
                 continue
 
-            fmri_response = np.concatenate(fmri_story_blocks, axis=0)
+            train_fmri = _load_split_fmri_response(split_dirs["train"], roi, sub, split_story_ids["train"])
+            dev_fmri = _load_split_fmri_response(split_dirs["dev"], roi, sub, split_story_ids["dev"])
+            has_test = split_dirs["test"] is not None
+            if has_test:
+                test_fmri = _load_split_fmri_response(split_dirs["test"], roi, sub, split_story_ids["test"])
+            else:
+                test_fmri = dev_fmri
 
-            mask_path = _resolve_mask_path(mask_root, roi, sub, model_name)
-            mask = scio.loadmat(mask_path)
-            fmri_response = fmri_response[:, np.where(mask["mask"] == 1)[1]]
-            fmri_response = torch.from_numpy(fmri_response)
+            if train_fmri is None or dev_fmri is None or test_fmri is None:
+                print(f"Skip ROI={roi}, sub={sub}: missing train/dev/test fMRI split files.")
+                continue
 
-            ridge_nested_cv(fmri_response, feature_matrix, roi_result_dir + "/", sub)
+            feat_train = split_features["train"]
+            feat_dev = split_features["dev"]
+            feat_test = split_features["test"] if has_test else feat_dev
+
+            n_train = min(train_fmri.shape[0], feat_train.shape[0])
+            n_dev = min(dev_fmri.shape[0], feat_dev.shape[0])
+            n_test = min(test_fmri.shape[0], feat_test.shape[0])
+
+            train_fmri = train_fmri[:n_train]
+            dev_fmri = dev_fmri[:n_dev]
+            test_fmri = test_fmri[:n_test]
+            feat_train = feat_train[:n_train]
+            feat_dev = feat_dev[:n_dev]
+            feat_test = feat_test[:n_test]
+
+            if args.fast:
+                train_fmri = train_fmri[: min(100, train_fmri.shape[0])]
+                dev_fmri = dev_fmri[: min(50, dev_fmri.shape[0])]
+                test_fmri = test_fmri[: min(50, test_fmri.shape[0])]
+                feat_train = feat_train[: train_fmri.shape[0]]
+                feat_dev = feat_dev[: dev_fmri.shape[0]]
+                feat_test = feat_test[: test_fmri.shape[0]]
+
+            if not has_test:
+                print(f"ROI={roi}, sub={sub}: test split missing, reporting dev-set performance.")
+
+            ridge_train_dev_test(
+                train_fmri,
+                feat_train,
+                dev_fmri,
+                feat_dev,
+                test_fmri,
+                feat_test,
+                roi_result_dir + "/",
+                sub,
+            )

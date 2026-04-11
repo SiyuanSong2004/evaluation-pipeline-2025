@@ -204,3 +204,62 @@ def ridge_nested_cv(total_fmri, total_feature, result_dir, sub, use_cuda=None):
     savefile = result_dir+sub+'_average.mat'
     scio.savemat(savefile, {'test_corrs':np.array(test_corrs.mean(0).cpu())})
     return np.array(test_corrs.mean(0).cpu())
+
+
+def ridge_train_dev_test(
+    train_fmri,
+    train_feature,
+    dev_fmri,
+    dev_feature,
+    test_fmri,
+    test_feature,
+    result_dir,
+    sub,
+    use_cuda=None,
+):
+    """Ridge regression with explicit train/dev/test split."""
+    if use_cuda is None:
+        use_cuda = torch.cuda.is_available()
+
+    device = torch.device("cuda" if use_cuda and torch.cuda.is_available() else "cpu")
+    print(f"ridge_train_dev_test device: {device}")
+
+    alphas = np.logspace(-3, 3, 10)
+
+    dev_corrs_by_alpha = ridge_multidim(
+        train_fmri,
+        train_feature,
+        dev_fmri,
+        dev_feature,
+        alphas,
+        use_cuda=use_cuda,
+    )
+    dev_corrs_by_alpha = torch.stack(dev_corrs_by_alpha)
+    max_ind = torch.argmax(dev_corrs_by_alpha.mean(1))
+    bestalpha = alphas[max_ind]
+
+    # Keep dev strictly as validation/evaluation split.
+    fit_feature = train_feature.to(device)
+    fit_fmri = train_fmri.to(device)
+    test_feature = test_feature.to(device)
+    test_fmri = test_fmri.to(device)
+
+    U, S, Vh = torch.linalg.svd(fit_feature, full_matrices=False)
+    V = Vh.transpose(0, 1)
+    UR = torch.matmul(U.transpose(0, 1), fit_fmri)
+    bestalpha_t = torch.tensor(bestalpha, dtype=S.dtype, device=device)
+    wt = reduce(torch.matmul, [V, torch.diag(S/(S**2+bestalpha_t**2)), UR])
+
+    pred = torch.matmul(test_feature, wt)
+    corrs = (zs(pred) * zs(test_fmri)).mean(0)
+    corrs[torch.isnan(corrs)] = 0
+
+    savefile = result_dir + sub + '_average.mat'
+    scio.savemat(
+        savefile,
+        {
+            'test_corrs': np.array(corrs.detach().cpu()),
+            'best_alpha': np.array([bestalpha], dtype=np.float32),
+        },
+    )
+    return np.array(corrs.detach().cpu())

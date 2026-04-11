@@ -4,8 +4,8 @@ set -euo pipefail
 
 MODEL_PATH=""
 REVISION_NAME=${REVISION_NAME:-""}
-EVAL_DIR="evaluation_data/cogbench-0415"
-TASKS="word_fmri,fmri,meg,eye_tracking"
+EVAL_DIR="evaluation_data/cogbench-fmri-0415"
+TASKS="word_fmri,fmri"
 OUTPUT_DIR=${OUTPUT_DIR:-"$PWD"}
 EYE_MAX_WORDS=${EYE_MAX_WORDS:-""}
 EYE_SAMPLE_SEED=${EYE_SAMPLE_SEED:-"42"}
@@ -96,24 +96,24 @@ if [[ "$TASKS" == *",fmri,"* ]]; then
         "${REVISION_ARGS[@]}"
 fi
 
-if [[ "$TASKS" == *",meg,"* ]]; then
-    python -m evaluation_pipeline.cogbench.run \
-        --model_path_or_name "$MODEL_PATH" \
-        --task meg \
-        --data_path "${EVAL_DIR}" \
-        --output_dir "${OUTPUT_DIR}" \
-        --save_predictions \
-    "${EYE_ARGS[@]}" \
-        "${REVISION_ARGS[@]}"
-fi
+# if [[ "$TASKS" == *",meg,"* ]]; then
+#     python -m evaluation_pipeline.cogbench.run \
+#         --model_path_or_name "$MODEL_PATH" \
+#         --task meg \
+#         --data_path "${EVAL_DIR}" \
+#         --output_dir "${OUTPUT_DIR}" \
+#         --save_predictions \
+#     "${EYE_ARGS[@]}" \
+#         "${REVISION_ARGS[@]}"
+# fi
 
-if [[ "$TASKS" == *",eye_tracking,"* ]]; then
-    python -m evaluation_pipeline.cogbench.run \
-        --model_path_or_name "$MODEL_PATH" \
-        --task eye_tracking \
-        --data_path "${EVAL_DIR}" \
-        --output_dir "${OUTPUT_DIR}" \
-        --save_predictions \
-    "${EYE_ARGS[@]}" \
-        "${REVISION_ARGS[@]}"
-fi
+# if [[ "$TASKS" == *",eye_tracking,"* ]]; then
+#     python -m evaluation_pipeline.cogbench.run \
+#         --model_path_or_name "$MODEL_PATH" \
+#         --task eye_tracking \
+#         --data_path "${EVAL_DIR}" \
+#         --output_dir "${OUTPUT_DIR}" \
+#         --save_predictions \
+#     "${EYE_ARGS[@]}" \
+#         "${REVISION_ARGS[@]}"
+# fi

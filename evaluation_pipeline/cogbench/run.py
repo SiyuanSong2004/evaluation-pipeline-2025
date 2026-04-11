@@ -69,8 +69,15 @@ def create_evaluation_report(args: argparse.ArgumentParser):
             metrics.append({"file": file_path, "value": score})
 
     elif args.task == "fmri":
-        pattern = os.path.join(output_root, model_name, "results", "fmri", "*", "*_average.mat")
-        for file_path in sorted(glob.glob(pattern)):
+        patterns = [
+            os.path.join(output_root, model_name, "results", "fmri128", "*", "*_average.mat"),
+            os.path.join(output_root, model_name, "results", "fmri", "*", "*_average.mat"),
+        ]
+        fmri_files = []
+        for pattern in patterns:
+            fmri_files.extend(glob.glob(pattern))
+
+        for file_path in sorted(set(fmri_files)):
             mat = sio.loadmat(file_path)
             if "test_corrs" not in mat:
                 continue

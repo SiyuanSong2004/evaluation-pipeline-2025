@@ -81,6 +81,71 @@ def run_prediction(feature, fmri, save_path):
     print(f"Saved: {save_path} | overall top-10% mean pearson r = {final_score:.4f}")
 
 
+def _resolve_split_dirs(data_path):
+    train_dir = os.path.join(data_path, "train")
+    dev_dir = os.path.join(data_path, "dev")
+    test_dir = os.path.join(data_path, "test")
+    if os.path.isdir(train_dir) and os.path.isdir(dev_dir):
+        return {
+            "train": train_dir,
+            "dev": dev_dir,
+            "test": test_dir if os.path.isdir(test_dir) else None,
+        }
+    return None
+
+
+def _compute_top10_trial_score(y_pred, y_true):
+    valid_cols = ~np.all(y_true == 0, axis=0)
+    if not np.any(valid_cols):
+        return 0.0
+
+    y_pred = y_pred[:, valid_cols]
+    y_true = y_true[:, valid_cols]
+    trial_corrs = np.array([pearsonr(y_pred[i], y_true[i])[0] for i in range(y_true.shape[0])])
+    trial_corrs[np.isnan(trial_corrs)] = 0.0
+
+    k = max(1, int(len(trial_corrs) * 0.1))
+    return float(np.mean(np.sort(trial_corrs)[-k:])) if k > 0 else 0.0
+
+
+def run_prediction_train_dev_test(X_train, X_dev, X_test, y_train, y_dev, y_test, save_path):
+    alphas = np.logspace(-4, 4, 10)
+
+    X_train = np.nan_to_num(X_train, 0.0)
+    X_dev = np.nan_to_num(X_dev, 0.0)
+    X_test = np.nan_to_num(X_test, 0.0)
+    y_train = np.nan_to_num(y_train, 0.0)
+    y_dev = np.nan_to_num(y_dev, 0.0)
+    y_test = np.nan_to_num(y_test, 0.0)
+
+    best_alpha = None
+    best_dev_mse = None
+    for alpha in alphas:
+        model = Ridge(alpha=alpha)
+        model.fit(X_train, y_train)
+        dev_pred = model.predict(X_dev)
+        dev_mse = float(np.mean((dev_pred - y_dev) ** 2))
+        if best_dev_mse is None or dev_mse < best_dev_mse:
+            best_dev_mse = dev_mse
+            best_alpha = float(alpha)
+
+    # Keep dev strictly for validation/evaluation. Do not train directly on dev data.
+    fit_X = X_train
+    fit_y = y_train
+    final_model = Ridge(alpha=best_alpha)
+    final_model.fit(fit_X, fit_y)
+    test_pred = final_model.predict(X_test)
+
+    final_score = _compute_top10_trial_score(test_pred, y_test)
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    sio.savemat(save_path, {"score": final_score, "best_alpha": best_alpha, "dev_mse": best_dev_mse})
+    print(
+        f"Saved: {save_path} | split score = {final_score:.4f}, "
+        f"best_alpha = {best_alpha:.6f}, dev_mse = {best_dev_mse:.6f}"
+    )
+
+
 def _resolve_cogbench_root(data_path):
     if os.path.isdir(os.path.join(data_path, "word")) and os.path.isdir(os.path.join(data_path, "word_fmri")):
         return data_path
@@ -120,22 +185,102 @@ def _load_feature_matrix(feature_json_path, stimuli_list):
 def eval_word_fmri(args):
     data_path = _resolve_cogbench_root(str(args.data_path))
     output_root = str(args.output_dir)
-    words_path = os.path.join(data_path, "word", "word.txt")
-    with open(words_path, encoding="utf-8") as f:
-        stimuli_list = [line.strip() for line in f if line.strip()]
-
     model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
     feature_json_path = os.path.join(output_root, model_name, "word_feature.json")
     if not os.path.exists(feature_json_path):
         raise FileNotFoundError(
             f"Feature file not found: {feature_json_path}. Please run inference first."
         )
+    out_dir = os.path.join(output_root, model_name, "results", "word_fmri")
+
+    split_dirs = _resolve_split_dirs(data_path)
+
+    if split_dirs is not None:
+        split_features = {}
+        split_fmri_files = {}
+        available_splits = ["train", "dev"]
+        if split_dirs["test"] is not None:
+            available_splits.append("test")
+
+        for split_name in available_splits:
+            split_path = split_dirs[split_name]
+            words_path = os.path.join(split_path, "word", "word.txt")
+            with open(words_path, encoding="utf-8") as f:
+                stimuli_list = [line.strip() for line in f if line.strip()]
+            split_features[split_name] = _load_feature_matrix(feature_json_path, stimuli_list)
+            split_fmri_files[split_name] = sorted(glob.glob(os.path.join(split_path, "word_fmri", "*_selected.mat")))
+
+        common_subjects = None
+        for split_name in available_splits:
+            subjects = {
+                os.path.basename(path).replace("_selected.mat", "") for path in split_fmri_files[split_name]
+            }
+            common_subjects = subjects if common_subjects is None else common_subjects & subjects
+
+        common_subjects = sorted(common_subjects) if common_subjects else []
+        if args.fast:
+            common_subjects = common_subjects[:1]
+            print("[FAST] Running sanity check only: first subject, split mode.")
+
+        if not common_subjects:
+            raise FileNotFoundError("No common *_selected.mat subject files found across train/dev/test splits.")
+
+        for subject in common_subjects:
+            has_test = "test" in split_features
+            print(f"\nProcessing {subject} (split mode, eval={'test' if has_test else 'dev'})")
+            split_fmri_data = {}
+            for split_name in available_splits:
+                fmri_path = os.path.join(split_dirs[split_name], "word_fmri", f"{subject}_selected.mat")
+                split_fmri_data[split_name] = sio.loadmat(fmri_path)["examples"]
+
+            n_train = min(split_features["train"].shape[0], split_fmri_data["train"].shape[0])
+            n_dev = min(split_features["dev"].shape[0], split_fmri_data["dev"].shape[0])
+            if has_test:
+                n_test = min(split_features["test"].shape[0], split_fmri_data["test"].shape[0])
+            else:
+                n_test = n_dev
+
+            if n_train < 5 or n_dev < 2 or n_test < 2:
+                print(
+                    f"Skip {subject}: not enough aligned trials "
+                    f"(train/dev/test = {n_train}/{n_dev}/{n_test})."
+                )
+                continue
+
+            X_train = split_features["train"][:n_train]
+            X_dev = split_features["dev"][:n_dev]
+            y_train = split_fmri_data["train"][:n_train]
+            y_dev = split_fmri_data["dev"][:n_dev]
+            if has_test:
+                X_test = split_features["test"][:n_test]
+                y_test = split_fmri_data["test"][:n_test]
+            else:
+                X_test = X_dev[:n_test]
+                y_test = y_dev[:n_test]
+
+            if args.fast:
+                n_voxels = min(128, y_train.shape[1], y_dev.shape[1], y_test.shape[1])
+                X_train = X_train[: min(80, X_train.shape[0])]
+                X_dev = X_dev[: min(30, X_dev.shape[0])]
+                X_test = X_test[: min(30, X_test.shape[0])]
+                y_train = y_train[: X_train.shape[0], :n_voxels]
+                y_dev = y_dev[: X_dev.shape[0], :n_voxels]
+                y_test = y_test[: X_test.shape[0], :n_voxels]
+                save_path = os.path.join(out_dir, f"{subject}_sanity_score.mat")
+            else:
+                save_path = os.path.join(out_dir, f"{subject}_score.mat")
+
+            run_prediction_train_dev_test(X_train, X_dev, X_test, y_train, y_dev, y_test, save_path)
+        return
+
+    words_path = os.path.join(data_path, "word", "word.txt")
+    with open(words_path, encoding="utf-8") as f:
+        stimuli_list = [line.strip() for line in f if line.strip()]
 
     feature_matrix = _load_feature_matrix(feature_json_path, stimuli_list)
 
     fmri_dir = os.path.join(data_path, "word_fmri")
     fmri_files = sorted(glob.glob(os.path.join(fmri_dir, "*_selected.mat")))
-    out_dir = os.path.join(output_root, model_name, "results", "word_fmri")
 
     if args.fast:
         fmri_files = fmri_files[:1]

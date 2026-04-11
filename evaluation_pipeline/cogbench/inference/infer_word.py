@@ -26,6 +26,37 @@ def _resolve_cogbench_root(data_path: str) -> str:
 	return data_path
 
 
+def _load_words(root_path: str) -> list[str]:
+	default_word_path = os.path.join(root_path, "word", "word.txt")
+	if os.path.exists(default_word_path):
+		with open(default_word_path, "r", encoding="utf-8") as f:
+			return [line.strip() for line in f if line.strip()]
+
+	split_names = ("train", "dev", "test")
+	split_paths = {split_name: os.path.join(root_path, split_name, "word", "word.txt") for split_name in split_names}
+	available_splits = [name for name, path in split_paths.items() if os.path.exists(path)]
+	if "train" in available_splits and "dev" in available_splits:
+		seen = set()
+		merged_words = []
+		for split_name in split_names:
+			if split_name not in available_splits:
+				continue
+			path = split_paths[split_name]
+			with open(path, "r", encoding="utf-8") as f:
+				for line in f:
+					word = line.strip()
+					if not word or word in seen:
+						continue
+					seen.add(word)
+					merged_words.append(word)
+		if merged_words:
+			return merged_words
+
+	raise FileNotFoundError(
+		f"No word list found. Expected either {default_word_path} or split files with at least train/dev under {root_path}."
+	)
+
+
 def _mean_pool_last_hidden(last_hidden_state, attention_mask=None):
 	if attention_mask is None:
 		return last_hidden_state.mean(dim=1)
@@ -73,9 +104,7 @@ def infer_word(
 ):
 	root_path = _resolve_cogbench_root(datapath)
 	model_name = os.path.basename(os.path.normpath(model_path_or_name))
-	data_path = os.path.join(root_path, "word", "word.txt")
-	with open(data_path, "r", encoding="utf-8") as f:
-		words = f.read().splitlines()
+	words = _load_words(root_path)
 
 	model, tokenizer = get_model_and_tokenizer(model_path_or_name, revision_name=revision_name, backend=backend)
 	word_features = extract_word_features(words, model, tokenizer, backend=backend)
