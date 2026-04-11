@@ -150,6 +150,29 @@ def _load_split_fmri_response(split_path: str, roi: str, sub: str, story_ids: li
     return torch.from_numpy(fmri_response)
 
 
+def _detect_subjects_for_roi(data_path: str, roi: str, split_dirs: dict[str, str] | None) -> list[str]:
+    if split_dirs is None:
+        roi_dir = os.path.join(data_path, "fmri_dim128", roi)
+        if not os.path.isdir(roi_dir):
+            return []
+        subjects = [name for name in os.listdir(roi_dir) if os.path.isdir(os.path.join(roi_dir, name))]
+        return sorted(subjects)
+
+    available_splits = ["train", "dev"]
+    if split_dirs["test"] is not None:
+        available_splits.append("test")
+
+    common_subjects = None
+    for split_name in available_splits:
+        roi_dir = os.path.join(split_dirs[split_name], "fmri_dim128", roi)
+        if not os.path.isdir(roi_dir):
+            return []
+        subjects = {name for name in os.listdir(roi_dir) if os.path.isdir(os.path.join(roi_dir, name))}
+        common_subjects = subjects if common_subjects is None else common_subjects & subjects
+
+    return sorted(common_subjects) if common_subjects else []
+
+
 def eval_fmri(args: ArgumentParser):
     data_path = str(args.data_path)
     output_root = str(args.output_dir)
@@ -184,11 +207,9 @@ def eval_fmri(args: ArgumentParser):
             split_features[split_name] = _load_feature_matrix(model_root, split_path, ids)
 
     roi_types = ["Cognition", "Language", "Manipulation", "Memory", "Reward", "Vision"]
-    subs = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
 
     if args.fast:
         roi_types = roi_types[:1]
-        subs = subs[:1]
 
     fmri_root = os.path.join(data_path, "fmri_dim128")
     result_root = os.path.join(model_root, "results", "fmri128")
@@ -196,6 +217,13 @@ def eval_fmri(args: ArgumentParser):
     for roi in roi_types:
         roi_result_dir = os.path.join(result_root, roi)
         os.makedirs(roi_result_dir, exist_ok=True)
+
+        subs = _detect_subjects_for_roi(data_path, roi, split_dirs)
+        if not subs:
+            print(f"Skip ROI={roi}: no subject directories found in fmri_dim128.")
+            continue
+        if args.fast:
+            subs = subs[:1]
 
         for sub in subs:
             if split_dirs is None:
