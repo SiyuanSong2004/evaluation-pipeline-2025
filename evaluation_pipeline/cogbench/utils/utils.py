@@ -1,9 +1,24 @@
+import os
 import torch
 from types import SimpleNamespace
 from transformers import AutoModel, AutoModelForSeq2SeqLM, AutoTokenizer
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 ENC_DEC_BACKENDS = {"enc_dec_mask", "enc_dec_prefix"}
+
+
+def get_model_name_from_path(model_path_or_name: str) -> str:
+	"""Convert a model path to a usable name by joining path components with '--'.
+
+	This preserves the full path structure instead of just using the basename,
+	which helps distinguish models with the same folder name but different paths.
+	"""
+	# Normalize path and split into components
+	normalized = os.path.normpath(model_path_or_name)
+	# Remove leading/trailing slashes and split
+	parts = normalized.strip(os.sep).split(os.sep)
+	# Join with '--' to create a flat name
+	return "--".join(parts)
 
 def get_model_and_tokenizer(model_path_or_name: str, revision_name: str | None = None, backend: str | None = None):
 	if backend in ENC_DEC_BACKENDS:

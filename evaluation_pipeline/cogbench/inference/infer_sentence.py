@@ -8,7 +8,7 @@ from typing import List
 import numpy as np
 import scipy.io as scio
 import torch
-from ..utils.utils import DEVICE, forward_for_representations, get_model_and_tokenizer
+from ..utils.utils import DEVICE, forward_for_representations, get_model_and_tokenizer, get_model_name_from_path
 
 
 BATCH_SIZE = 64
@@ -152,7 +152,7 @@ def infer_sentence(
 	step_start = time.time()
 	print(f"[STEP] Starting inference for model: {model_path_or_name}")
 
-	model_name = os.path.basename(os.path.normpath(model_path_or_name))
+	model_name = get_model_name_from_path(model_path_or_name)
 	if output_dir is None:
 		output_dir = os.path.join(datapath, model_name)
 

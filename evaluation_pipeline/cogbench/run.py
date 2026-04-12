@@ -10,6 +10,7 @@ import scipy.io as sio
 
 from .infer import infer
 from .eval import eval
+from .utils.utils import get_model_name_from_path
 
 BACKEND_CHOICES = ["mlm", "causal", "mntp", "enc_dec_mask", "enc_dec_prefix"]
 
@@ -50,7 +51,7 @@ def _parse_arguments():
 
 def create_evaluation_report(args: argparse.ArgumentParser):
     output_root = str(args.output_dir)
-    model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
+    model_name = get_model_name_from_path(str(args.model_path_or_name))
     model_root = pathlib.Path(output_root) / model_name
     output_dir = model_root / "results"
     output_dir.mkdir(parents=True, exist_ok=True)

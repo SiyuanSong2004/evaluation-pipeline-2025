@@ -10,6 +10,7 @@ import torch
 from scipy.stats import gamma
 
 from ..utils.data_utils import ridge_nested_cv, ridge_train_dev_test
+from ..utils.utils import get_model_name_from_path
 
 
 TR_SECONDS = 0.71
@@ -189,7 +190,7 @@ def eval_fmri(args: ArgumentParser):
 
     data_path = str(args.data_path)
     output_root = str(args.output_dir)
-    model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
+    model_name = get_model_name_from_path(str(args.model_path_or_name))
     model_root = os.path.join(output_root, model_name)
 
     print(f"[STEP] Resolving data splits...")
