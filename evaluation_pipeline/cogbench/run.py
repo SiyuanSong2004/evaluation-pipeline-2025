@@ -3,6 +3,7 @@ import glob
 import json
 import os
 import pathlib
+import time
 
 import numpy as np
 import scipy.io as sio
@@ -135,9 +136,30 @@ def create_evaluation_report(args: argparse.ArgumentParser):
 
 def main():
     args = _parse_arguments()
+
+    print("=" * 60)
+    print("STEP 1/3: Inference - Extracting model hidden states")
+    print("=" * 60)
+    start_time = time.time()
     infer(args)
+    elapsed = time.time() - start_time
+    print(f"[TIME] Inference completed in {elapsed:.2f}s ({elapsed/60:.2f}m)")
+
+    print("\n" + "=" * 60)
+    print("STEP 2/3: Evaluation - Computing fMRI alignment")
+    print("=" * 60)
+    start_time = time.time()
     eval(args)
+    elapsed = time.time() - start_time
+    print(f"[TIME] Evaluation completed in {elapsed:.2f}s ({elapsed/60:.2f}m)")
+
+    print("\n" + "=" * 60)
+    print("STEP 3/3: Report Generation - Creating evaluation summary")
+    print("=" * 60)
+    start_time = time.time()
     create_evaluation_report(args)
+    elapsed = time.time() - start_time
+    print(f"[TIME] Report generation completed in {elapsed:.2f}s ({elapsed/60:.2f}m)")
 
 if __name__ == "__main__":
     main()

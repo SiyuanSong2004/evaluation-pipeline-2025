@@ -2,6 +2,7 @@ import argparse
 import glob
 import os
 import re
+import time
 from typing import List
 
 import numpy as np
@@ -148,6 +149,9 @@ def infer_sentence(
 	layer_index: int = -1,
 	backend: str | None = None,
 ):
+	step_start = time.time()
+	print(f"[STEP] Starting inference for model: {model_path_or_name}")
+
 	model_name = os.path.basename(os.path.normpath(model_path_or_name))
 	if output_dir is None:
 		output_dir = os.path.join(datapath, model_name)
@@ -160,10 +164,17 @@ def infer_sentence(
 			f"No story files found in: {os.path.join(datapath, 'story')} "
 			f"or in split dirs under {datapath}/{{train,dev,test}}/story"
 		)
+	print(f"[INFO] Found {len(story_files)} story files to process")
 
+	print(f"[STEP] Loading model and tokenizer...")
+	model_load_start = time.time()
 	model, tokenizer = get_model_and_tokenizer(model_path_or_name, revision_name=revision_name, backend=backend)
+	print(f"[TIME] Model loading completed in {time.time() - model_load_start:.2f}s")
 
-	for story_file in story_files:
+	print(f"[STEP] Extracting hidden states from stories...")
+	extraction_start = time.time()
+	for i, story_file in enumerate(story_files):
+		story_start = time.time()
 		story_id = parse_story_id(story_file)
 		words_per_line = read_words_per_line(story_file)
 		data = encode_words_mean_pool(
@@ -177,7 +188,11 @@ def infer_sentence(
 		if save_predictions:
 			save_path = os.path.join(output_dir, f"{SENTENCE_FEATURE_PREFIX}_story_{story_id}.mat")
 			scio.savemat(save_path, {"data": data})
-			print(f"Saved {save_path}: data shape = {data.shape}")
+			print(f"[PROGRESS] Story {i+1}/{len(story_files)} (ID={story_id}): saved {data.shape} in {time.time() - story_start:.2f}s")
+
+	print(f"[TIME] Feature extraction completed in {time.time() - extraction_start:.2f}s ({(time.time() - extraction_start)/60:.2f}m)")
+	total_time = time.time() - step_start
+	print(f"[TIME] Total inference completed in {total_time:.2f}s ({total_time/60:.2f}m)")
 
 	return output_dir
 

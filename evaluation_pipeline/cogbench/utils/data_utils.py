@@ -4,6 +4,7 @@ import torch
 import numpy as np
 import scipy.io as scio
 import itertools as itools
+import time
 from functools import reduce
 
 zs = lambda v: (v-v.mean(0))/v.std(0)
@@ -135,16 +136,20 @@ def ridge_multidim(
     return Rcorrs
 
 def ridge_nested_cv(total_fmri, total_feature, result_dir, sub, use_cuda=None):
-    """ 
+    """
     nested cross-validation, which is applicable to situations without
     designated test set
     Return: corrs on all out test set
     """
+    step_start = time.time()
+    print(f"[STEP] Starting nested cross-validation ridge regression for subject: {sub}")
+
     if use_cuda is None:
         use_cuda = torch.cuda.is_available()
 
     device = torch.device("cuda" if use_cuda and torch.cuda.is_available() else "cpu")
-    print(f"ridge_nested_cv device: {device}")
+    print(f"[INFO] Using device: {device}")
+    print(f"[INFO] Data shapes - fMRI: {total_fmri.shape}, Features: {total_feature.shape}")
 
     alphas = np.logspace(-3, 3, 10)
     nTR, n_dim = total_feature.shape
@@ -203,6 +208,8 @@ def ridge_nested_cv(total_fmri, total_feature, result_dir, sub, use_cuda=None):
     weights = torch.stack(weights)
     savefile = result_dir+sub+'_average.mat'
     scio.savemat(savefile, {'test_corrs':np.array(test_corrs.mean(0).cpu())})
+    elapsed = time.time() - step_start
+    print(f"[TIME] Nested CV completed in {elapsed:.2f}s ({elapsed/60:.2f}m)")
     return np.array(test_corrs.mean(0).cpu())
 
 
@@ -218,11 +225,15 @@ def ridge_train_dev_test(
     use_cuda=None,
 ):
     """Ridge regression with explicit train/dev/test split."""
+    step_start = time.time()
+    print(f"[STEP] Starting train/dev/test ridge regression for subject: {sub}")
+
     if use_cuda is None:
         use_cuda = torch.cuda.is_available()
 
     device = torch.device("cuda" if use_cuda and torch.cuda.is_available() else "cpu")
-    print(f"ridge_train_dev_test device: {device}")
+    print(f"[INFO] Using device: {device}")
+    print(f"[INFO] Data shapes - Train: {train_fmri.shape}, Dev: {dev_fmri.shape}, Test: {test_fmri.shape}")
 
     alphas = np.logspace(-3, 3, 10)
 
@@ -262,4 +273,6 @@ def ridge_train_dev_test(
             'best_alpha': np.array([bestalpha], dtype=np.float32),
         },
     )
+    elapsed = time.time() - step_start
+    print(f"[TIME] Train/dev/test ridge regression completed in {elapsed:.2f}s")
     return np.array(corrs.detach().cpu())

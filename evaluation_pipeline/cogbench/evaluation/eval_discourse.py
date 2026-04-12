@@ -1,6 +1,7 @@
 import os
 from argparse import ArgumentParser
 import re
+import time
 
 import h5py
 import numpy as np
@@ -106,6 +107,9 @@ def _postprocess_story_feature(
 
 
 def _load_feature_matrix(feature_root: str, data_path: str, story_ids: list[int]) -> torch.FloatTensor:
+    step_start = time.time()
+    print(f"[STEP] Loading and HRF-convolving features for {len(story_ids)} stories...")
+
     if not os.path.isdir(feature_root):
         raise FileNotFoundError(f"Feature directory not found: {feature_root}. Please run inference first.")
 
@@ -114,10 +118,16 @@ def _load_feature_matrix(feature_root: str, data_path: str, story_ids: list[int]
 
     all_features = []
     for idx, story_id in enumerate(story_ids):
+        story_start = time.time()
         processed = _postprocess_story_feature(feature_root, data_path, story_id, hrf, ref_lengths[idx])
         all_features.append(torch.from_numpy(processed))
+        if (idx + 1) % 10 == 0 or idx == len(story_ids) - 1:
+            print(f"[PROGRESS] Processed {idx+1}/{len(story_ids)} stories ({time.time() - step_start:.1f}s elapsed)")
 
-    return torch.cat(all_features, dim=0)
+    result = torch.cat(all_features, dim=0)
+    elapsed = time.time() - step_start
+    print(f"[TIME] Feature matrix loading completed in {elapsed:.2f}s ({elapsed/60:.2f}m), shape: {result.shape}")
+    return result
 
 
 def _resolve_split_dirs(data_path: str) -> dict[str, str] | None:
@@ -174,27 +184,40 @@ def _detect_subjects_for_roi(data_path: str, roi: str, split_dirs: dict[str, str
 
 
 def eval_fmri(args: ArgumentParser):
+    step_start = time.time()
+    print(f"[STEP] Starting fMRI evaluation")
+
     data_path = str(args.data_path)
     output_root = str(args.output_dir)
     model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
     model_root = os.path.join(output_root, model_name)
 
+    print(f"[STEP] Resolving data splits...")
+    split_start = time.time()
     split_dirs = _resolve_split_dirs(data_path)
+    print(f"[TIME] Split resolution completed in {time.time() - split_start:.2f}s")
 
     if split_dirs is None:
+        print(f"[STEP] Loading features (no train/dev/test split)...")
+        feature_load_start = time.time()
         all_story_ids = _available_story_ids(data_path)
         if not all_story_ids:
             raise FileNotFoundError(f"No story_*.mat files found under: {os.path.join(data_path, 'node_count_bu')}")
 
         story_ids = all_story_ids[:FAST_STORY_COUNT] if args.fast else all_story_ids
+        print(f"[INFO] Processing {len(story_ids)} stories")
         feature_matrix = _load_feature_matrix(model_root, data_path, story_ids)
+        print(f"[TIME] Feature loading completed in {time.time() - feature_load_start:.2f}s ({(time.time() - feature_load_start)/60:.2f}m)")
     else:
+        print(f"[STEP] Loading features for train/dev/test splits...")
+        feature_load_start = time.time()
         split_story_ids = {}
         split_features = {}
         available_splits = ["train", "dev"]
         if split_dirs["test"] is not None:
             available_splits.append("test")
         for split_name in available_splits:
+            print(f"[STEP] Loading {split_name} split features...")
             split_path = split_dirs[split_name]
             ids = _available_story_ids(split_path)
             if not ids:
@@ -204,7 +227,9 @@ def eval_fmri(args: ArgumentParser):
             if args.fast:
                 ids = ids[:FAST_STORY_COUNT]
             split_story_ids[split_name] = ids
+            print(f"[INFO] {split_name}: {len(ids)} stories")
             split_features[split_name] = _load_feature_matrix(model_root, split_path, ids)
+        print(f"[TIME] All split features loaded in {time.time() - feature_load_start:.2f}s ({(time.time() - feature_load_start)/60:.2f}m)")
 
     roi_types = ["Cognition", "Language", "Manipulation", "Memory", "Reward", "Vision"]
 
@@ -214,18 +239,29 @@ def eval_fmri(args: ArgumentParser):
     fmri_root = os.path.join(data_path, "fmri")
     result_root = os.path.join(model_root, "results", "fmri")
 
-    for roi in roi_types:
+    print(f"[STEP] Starting evaluation across {len(roi_types)} ROIs...")
+    roi_start_total = time.time()
+
+    for roi_idx, roi in enumerate(roi_types):
+        print(f"\n[PROGRESS] ROI {roi_idx+1}/{len(roi_types)}: {roi}")
+        roi_start = time.time()
+
         roi_result_dir = os.path.join(result_root, roi)
         os.makedirs(roi_result_dir, exist_ok=True)
 
         subs = _detect_subjects_for_roi(data_path, roi, split_dirs)
         if not subs:
-            print(f"Skip ROI={roi}: no subject directories found in fmri.")
+            print(f"[SKIP] ROI={roi}: no subject directories found in fmri.")
             continue
         if args.fast:
             subs = subs[:1]
 
-        for sub in subs:
+        print(f"[INFO] Found {len(subs)} subjects for ROI={roi}")
+
+        for sub_idx, sub in enumerate(subs):
+            sub_start = time.time()
+            print(f"[PROGRESS]   Subject {sub_idx+1}/{len(subs)}: {sub}", end=" ")
+
             if split_dirs is None:
                 fmri_path = os.path.join(fmri_root, roi, sub)
                 fmri_story_blocks = []
@@ -237,12 +273,13 @@ def eval_fmri(args: ArgumentParser):
                     fmri_story_blocks.append(np.array(mat["fmri_response"].T))
 
                 if not fmri_story_blocks:
-                    print(f"Skip ROI={roi}, sub={sub}: no selected fMRI story files found.")
+                    print(f"\n[SKIP] ROI={roi}, sub={sub}: no selected fMRI story files found.")
                     continue
 
                 fmri_response = np.concatenate(fmri_story_blocks, axis=0)
                 fmri_response = torch.from_numpy(fmri_response)
                 ridge_nested_cv(fmri_response, feature_matrix, roi_result_dir + "/", sub)
+                print(f"- completed in {time.time() - sub_start:.2f}s")
                 continue
 
             train_fmri = _load_split_fmri_response(split_dirs["train"], roi, sub, split_story_ids["train"])
@@ -254,7 +291,7 @@ def eval_fmri(args: ArgumentParser):
                 test_fmri = dev_fmri
 
             if train_fmri is None or dev_fmri is None or test_fmri is None:
-                print(f"Skip ROI={roi}, sub={sub}: missing train/dev/test fMRI split files.")
+                print(f"\n[SKIP] ROI={roi}, sub={sub}: missing train/dev/test fMRI split files.")
                 continue
 
             feat_train = split_features["train"]
@@ -281,7 +318,7 @@ def eval_fmri(args: ArgumentParser):
                 feat_test = feat_test[: test_fmri.shape[0]]
 
             if not has_test:
-                print(f"ROI={roi}, sub={sub}: test split missing, reporting dev-set performance.")
+                print(f"\n[INFO] ROI={roi}, sub={sub}: test split missing, reporting dev-set performance.")
 
             ridge_train_dev_test(
                 train_fmri,
@@ -293,3 +330,10 @@ def eval_fmri(args: ArgumentParser):
                 roi_result_dir + "/",
                 sub,
             )
+            print(f"- completed in {time.time() - sub_start:.2f}s")
+
+        print(f"[TIME] ROI {roi} completed in {time.time() - roi_start:.2f}s ({(time.time() - roi_start)/60:.2f}m)")
+
+    print(f"[TIME] All ROIs completed in {time.time() - roi_start_total:.2f}s ({(time.time() - roi_start_total)/60:.2f}m)")
+    total_time = time.time() - step_start
+    print(f"[TIME] Total evaluation completed in {total_time:.2f}s ({total_time/60:.2f}m)")
