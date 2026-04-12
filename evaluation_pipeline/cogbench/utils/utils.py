@@ -37,8 +37,14 @@ def get_model_and_tokenizer(model_path_or_name: str, revision_name: str | None =
 	model = model.to(DEVICE)
 	model.eval()
 
-	if tokenizer.pad_token is None and tokenizer.eos_token is not None:
-		tokenizer.pad_token = tokenizer.eos_token
+	if tokenizer.pad_token is None:
+		if tokenizer.eos_token is not None:
+			tokenizer.pad_token = tokenizer.eos_token
+		else:
+			# For models without eos_token, add a new pad_token
+			tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+			# Resize model embeddings to account for new token
+			model.resize_token_embeddings(len(tokenizer))
 
 	return model, tokenizer
 
