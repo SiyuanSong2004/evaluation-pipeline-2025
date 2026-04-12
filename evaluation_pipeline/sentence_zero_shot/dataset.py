@@ -2,7 +2,7 @@
 # -------------------
 from __future__ import annotations
 
-from transformers import AutoProcessor
+from transformers import AutoProcessor, AutoTokenizer
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence
@@ -21,8 +21,12 @@ class CompletionRankingDataset(Dataset):
 
     def __init__(self: CompletionRankingDataset, args: argparse.Namespace):
         self.backend: str = args.backend
-        self.processor: ProcessorMixin = AutoProcessor.from_pretrained(args.model_path_or_name, padding_side="right", revision=args.revision_name, trust_remote_code=True)
-        self.tokenizer = self.processor.tokenizer if hasattr(self.processor, "tokenizer") else self.processor
+        try:
+            self.processor: ProcessorMixin = AutoProcessor.from_pretrained(args.model_path_or_name, padding_side="right", revision=args.revision_name, trust_remote_code=True)
+            self.tokenizer = self.processor.tokenizer if hasattr(self.processor, "tokenizer") else self.processor
+        except (ValueError, OSError):
+            self.processor = AutoTokenizer.from_pretrained(args.model_path_or_name, padding_side="right", revision=args.revision_name, trust_remote_code=True)
+            self.tokenizer = self.processor
 
         if self.tokenizer.pad_token_id is None:
             if self.backend == "causal":

@@ -2,7 +2,7 @@
 Download and convert Chinese evaluation datasets to JSONL format.
 
 Zero-shot:
-  - ZhoBLiMP (Junrui1202/zhoblimp): Chinese minimal pairs
+  - ZhoBLiMP (github.com/sjtu-compling/ZhoBLiMP): Chinese minimal pairs
 
 Fine-tuning (CLUE):
   - AFQMC: sentence similarity
@@ -17,10 +17,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import pathlib
+import tarfile
+import urllib.request
 
-from datasets import load_dataset, get_dataset_config_names
+from datasets import load_dataset
 
 
 def write_jsonl(data: list[dict], path: pathlib.Path) -> None:
@@ -35,32 +38,50 @@ def write_jsonl(data: list[dict], path: pathlib.Path) -> None:
 # ZhoBLiMP
 # ──────────────────────────────────────────────
 
+ZHOBLIMP_URL = (
+    "https://github.com/sjtu-compling/ZhoBLiMP/raw/main/data/ZhoBLiMP.tar.gz"
+)
+
+
 def prepare_zhoblimp(output_dir: pathlib.Path) -> None:
-    """Download ZhoBLiMP and convert each paradigm to a JSONL file."""
+    """Download ZhoBLiMP from GitHub and extract each paradigm as a JSONL file."""
     print("=== ZhoBLiMP ===")
     full_dir = output_dir / "full_eval" / "zhoblimp"
     fast_dir = output_dir / "fast_eval" / "zhoblimp"
 
-    configs = get_dataset_config_names("Junrui1202/zhoblimp")
-    print(f"  Found {len(configs)} paradigms")
+    print(f"  Downloading from {ZHOBLIMP_URL} ...")
+    with urllib.request.urlopen(ZHOBLIMP_URL) as resp:
+        tar_bytes = io.BytesIO(resp.read())
 
-    for config in configs:
-        ds = load_dataset("Junrui1202/zhoblimp", config, split="train")
-        rows = []
-        for item in ds:
-            rows.append({
-                "sentence_good": item["sentence_good"],
-                "sentence_bad": item["sentence_bad"],
-                "UID": item.get("UID", config),
-                "phenomenon": item.get("phenomenon", config),
-            })
+    paradigm_count = 0
+    with tarfile.open(fileobj=tar_bytes, mode="r:gz") as tar:
+        for member in tar.getmembers():
+            if not member.name.endswith(".jsonl"):
+                continue
+            paradigm_name = pathlib.Path(member.name).stem
+            f = tar.extractfile(member)
+            if f is None:
+                continue
 
-        # Full eval: all examples
-        write_jsonl(rows, full_dir / f"{config}.jsonl")
+            rows = []
+            for line in f:
+                item = json.loads(line)
+                rows.append({
+                    "sentence_good": item["sentence_good"],
+                    "sentence_bad": item["sentence_bad"],
+                    "UID": item.get("UID", paradigm_name),
+                    "phenomenon": item.get("phenomenon", paradigm_name),
+                })
 
-        # Fast eval: subsample to 100 examples per paradigm
-        fast_rows = rows[:100]
-        write_jsonl(fast_rows, fast_dir / f"{config}.jsonl")
+            # Full eval: all examples
+            write_jsonl(rows, full_dir / f"{paradigm_name}.jsonl")
+
+            # Fast eval: subsample to 100 examples per paradigm
+            fast_rows = rows[:100]
+            write_jsonl(fast_rows, fast_dir / f"{paradigm_name}.jsonl")
+            paradigm_count += 1
+
+    print(f"  Processed {paradigm_count} paradigms")
 
 
 # ──────────────────────────────────────────────
