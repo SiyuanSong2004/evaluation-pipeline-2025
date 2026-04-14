@@ -1,8 +1,15 @@
 """
 Download and convert Chinese evaluation datasets to JSONL format.
 
-Zero-shot:
-  - ZhoBLiMP (github.com/sjtu-compling/ZhoBLiMP): Chinese minimal pairs
+Zero-shot (NLU Track):
+  - ZhoBLiMP (chinese-babylm-org/zhoblimp): Chinese minimal pairs
+
+Zero-shot (Hanzi Track):
+  - hanzi-structure (chinese-babylm-org/hanzi-structure): character structure minimal pairs
+  - hanzi-pinyin (chinese-babylm-org/hanzi-pinyin): character phonology minimal pairs
+
+Cog Track:
+  - CogBench fMRI (zhiheng-qian/cogbench): fMRI brain data for ridge regression
 
 Fine-tuning (CLUE):
   - AFQMC: sentence similarity
@@ -17,13 +24,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import pathlib
 import tarfile
-import urllib.request
 
 from datasets import load_dataset
+from huggingface_hub import hf_hub_download, list_repo_files
 
 
 def write_jsonl(data: list[dict], path: pathlib.Path) -> None:
@@ -35,35 +41,27 @@ def write_jsonl(data: list[dict], path: pathlib.Path) -> None:
 
 
 # ──────────────────────────────────────────────
-# ZhoBLiMP
+# ZhoBLiMP  (NLU Track)
 # ──────────────────────────────────────────────
 
-ZHOBLIMP_URL = (
-    "https://github.com/sjtu-compling/ZhoBLiMP/raw/main/data/ZhoBLiMP.tar.gz"
-)
-
-
 def prepare_zhoblimp(output_dir: pathlib.Path) -> None:
-    """Download ZhoBLiMP from GitHub and extract each paradigm as a JSONL file."""
+    """Download ZhoBLiMP from HuggingFace and extract each paradigm as a JSONL file."""
     print("=== ZhoBLiMP ===")
     full_dir = output_dir / "full_eval" / "zhoblimp"
     fast_dir = output_dir / "fast_eval" / "zhoblimp"
 
-    print(f"  Downloading from {ZHOBLIMP_URL} ...")
-    with urllib.request.urlopen(ZHOBLIMP_URL) as resp:
-        tar_bytes = io.BytesIO(resp.read())
-
+    repo_id = "chinese-babylm-org/zhoblimp"
+    print(f"  Loading from {repo_id} ...")
     paradigm_count = 0
-    with tarfile.open(fileobj=tar_bytes, mode="r:gz") as tar:
-        for member in tar.getmembers():
-            if not member.name.endswith(".jsonl"):
-                continue
-            paradigm_name = pathlib.Path(member.name).stem
-            f = tar.extractfile(member)
-            if f is None:
-                continue
 
-            rows = []
+    for filename in list_repo_files(repo_id, repo_type="dataset"):
+        if not filename.endswith(".jsonl"):
+            continue
+        paradigm_name = pathlib.Path(filename).stem
+        local_path = hf_hub_download(repo_id=repo_id, filename=filename, repo_type="dataset")
+
+        rows = []
+        with open(local_path, encoding="utf-8") as f:
             for line in f:
                 item = json.loads(line)
                 rows.append({
@@ -73,15 +71,90 @@ def prepare_zhoblimp(output_dir: pathlib.Path) -> None:
                     "phenomenon": item.get("phenomenon", paradigm_name),
                 })
 
-            # Full eval: all examples
-            write_jsonl(rows, full_dir / f"{paradigm_name}.jsonl")
-
-            # Fast eval: subsample to 100 examples per paradigm
-            fast_rows = rows[:100]
-            write_jsonl(fast_rows, fast_dir / f"{paradigm_name}.jsonl")
-            paradigm_count += 1
+        write_jsonl(rows, full_dir / f"{paradigm_name}.jsonl")
+        write_jsonl(rows[:100], fast_dir / f"{paradigm_name}.jsonl")
+        paradigm_count += 1
 
     print(f"  Processed {paradigm_count} paradigms")
+
+
+# ──────────────────────────────────────────────
+# Hanzi Track
+# ──────────────────────────────────────────────
+
+def prepare_hanzi_structure(output_dir: pathlib.Path) -> None:
+    """Download hanzi-structure from HuggingFace and write as JSONL."""
+    print("=== Hanzi Structure ===")
+    full_dir = output_dir / "full_eval" / "hanzi_structure"
+    fast_dir = output_dir / "fast_eval" / "hanzi_structure"
+
+    repo_id = "chinese-babylm-org/hanzi-structure"
+    print(f"  Loading from {repo_id} ...")
+    ds = load_dataset(repo_id, split="train")
+
+    rows = []
+    for item in ds:
+        rows.append({
+            "sentence_good": item["sent_good"],
+            "sentence_bad": item["sent_bad"],
+            "UID": item["condition"],
+            "phenomenon": item["Structure"],
+        })
+
+    write_jsonl(rows, full_dir / "hanzi_structure.jsonl")
+    write_jsonl(rows[:100], fast_dir / "hanzi_structure.jsonl")
+
+
+def prepare_hanzi_pinyin(output_dir: pathlib.Path) -> None:
+    """Download hanzi-pinyin from HuggingFace and write as JSONL."""
+    print("=== Hanzi Pinyin ===")
+    full_dir = output_dir / "full_eval" / "hanzi_pinyin"
+    fast_dir = output_dir / "fast_eval" / "hanzi_pinyin"
+
+    repo_id = "chinese-babylm-org/hanzi-pinyin"
+    print(f"  Loading from {repo_id} ...")
+    ds = load_dataset(repo_id, split="train")
+
+    rows = []
+    for item in ds:
+        rows.append({
+            "sentence_good": item["sentence_good"],
+            "sentence_bad": item["sentence_bad"],
+            "UID": item["condition"],
+            "phenomenon": item["condition"],
+        })
+
+    write_jsonl(rows, full_dir / "hanzi_pinyin.jsonl")
+    write_jsonl(rows[:100], fast_dir / "hanzi_pinyin.jsonl")
+
+
+# ──────────────────────────────────────────────
+# CogBench  (Cog Track)
+# ──────────────────────────────────────────────
+
+COGBENCH_REPO = "zhiheng-qian/cogbench"
+COGBENCH_TAR = "cogbench-fmri-0415.tar"
+COGBENCH_DIR = "cogbench-fmri-0415"
+
+
+def prepare_cogbench(output_dir: pathlib.Path) -> None:
+    """Download and extract CogBench fMRI data from HuggingFace."""
+    print("=== CogBench ===")
+    dest_dir = output_dir / COGBENCH_DIR
+
+    if dest_dir.exists():
+        print(f"  {dest_dir} already exists, skipping download.")
+        return
+
+    print(f"  Downloading {COGBENCH_TAR} from {COGBENCH_REPO} ...")
+    local_path = hf_hub_download(repo_id=COGBENCH_REPO, filename=COGBENCH_TAR, repo_type="dataset")
+
+    print(f"  Extracting to {output_dir} ...")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(local_path, "r") as tar:
+        tar.extractall(path=output_dir)
+
+    print(f"  Done: {dest_dir}")
 
 
 # ──────────────────────────────────────────────
@@ -171,6 +244,9 @@ def main():
     args = parser.parse_args()
 
     prepare_zhoblimp(args.output_dir)
+    prepare_hanzi_structure(args.output_dir)
+    prepare_hanzi_pinyin(args.output_dir)
+    prepare_cogbench(args.output_dir)
     prepare_afqmc(args.output_dir)
     prepare_ocnli(args.output_dir)
     prepare_tnews(args.output_dir)

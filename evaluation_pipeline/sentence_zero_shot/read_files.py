@@ -70,6 +70,8 @@ def decode(line: str, file_name: pathlib.Path, task: str, full_sentence_scores: 
         data_dict = decode_blimp(raw_dict, file_name)
     elif task == "zhoblimp":
         data_dict = decode_zhoblimp(raw_dict, file_name)
+    elif task in ("hanzi_structure", "hanzi_pinyin"):
+        data_dict = decode_zhoblimp(raw_dict, file_name)
     elif task == "ewok":
         data_dict = decode_ewok(raw_dict, full_sentence_scores)
     elif "wug" in task:

@@ -1,0 +1,45 @@
+# ─────────────────────────────────────────────
+# Chinese BabyLM Evaluation Pipeline Config
+# ─────────────────────────────────────────────
+
+# Models to evaluate.
+# Each entry needs:
+#   path    — HuggingFace repo ID or local directory path
+#   backend — one of: causal, mlm, mntp, enc_dec_mask, enc_dec_prefix
+models:
+  - path: Qwen/Qwen3-0.6B
+    backend: causal
+  # - path: /path/to/local/model
+  #   backend: mlm
+
+# Tasks to run. Comment out any group or individual task to skip it.
+tasks:
+  # NLU Track — zero-shot minimal pairs
+  zero_shot:
+    - zhoblimp
+    - hanzi_structure
+    - hanzi_pinyin
+
+  # Cog Track — fMRI brain encoding
+  cogbench:
+    - word_fmri
+    - fmri
+
+  # Fine-tuning Track — CLUE tasks
+  finetune:
+    - afqmc
+    - ocnli
+    - tnews
+    - cluewsc2020
+
+# Directories
+eval_dir: evaluation_data   # where prepare_chinese_data.py puts data
+results_dir: results        # where eval results are written
+
+# Fine-tuning hyperparameters
+finetune_hparams:
+  lr: 3.0e-5
+  batch_size: 32
+  max_epochs: 10
+  wsc_epochs: 30     # extra epochs for cluewsc2020
+  seed: 42
