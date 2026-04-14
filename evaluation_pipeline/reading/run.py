@@ -26,7 +26,8 @@ def parse_args():
 
     args = parser.parse_args()
 
-    args.model_name = pathlib.Path(args.model_path_or_name).stem
+    # Keep dots in model names (e.g., qwen3-0.6b-base) to avoid output path mismatches.
+    args.model_name = pathlib.Path(args.model_path_or_name).name
     args.output_dir /= args.model_name
     if args.revision_name is None:
         args.output_dir /= "main"

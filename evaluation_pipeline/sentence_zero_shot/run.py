@@ -160,7 +160,8 @@ def main():
     if args.images_path is not None:
         assert args.batch_size == 1, "Multimodal only works in batch size 1!"
     dataset = args.data_path.stem
-    args.model_name = pathlib.Path(args.model_path_or_name).stem
+    # Keep dots in model names (e.g., qwen3-0.6b-base) to align with collector paths.
+    args.model_name = pathlib.Path(args.model_path_or_name).name
     if args.revision_name is None:
         revision_name = "main"
     else:
