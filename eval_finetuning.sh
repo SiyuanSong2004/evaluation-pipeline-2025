@@ -29,6 +29,8 @@ python -m evaluation_pipeline.finetune.run \
     --metrics accuracy f1 mcc \
     --metric_for_valid accuracy \
     --seed $SEED \
+    --causal \
+    --take_final \
     --verbose
 
 # OCNLI — natural language inference, 3 labels
@@ -49,6 +51,8 @@ python -m evaluation_pipeline.finetune.run \
     --metrics accuracy \
     --metric_for_valid accuracy \
     --seed $SEED \
+    --causal \
+    --take_final \
     --verbose
 
 # TNEWS — news topic classification, 15 labels
@@ -69,6 +73,8 @@ python -m evaluation_pipeline.finetune.run \
     --metrics accuracy \
     --metric_for_valid accuracy \
     --seed $SEED \
+    --causal \
+    --take_final \
     --verbose
 
 # CLUEWSC2020 — pronoun disambiguation, 2 labels
@@ -89,4 +95,6 @@ python -m evaluation_pipeline.finetune.run \
     --metrics accuracy f1 mcc \
     --metric_for_valid accuracy \
     --seed $SEED \
+    --causal \
+    --take_final \
     --verbose

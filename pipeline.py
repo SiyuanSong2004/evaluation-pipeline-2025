@@ -109,7 +109,7 @@ def _build_cogbench_cmd(model_path, backend, task, eval_dir, results_dir):
     ]
 
 
-def _build_finetune_cmd(model_path, task, eval_dir, results_dir, hparams):
+def _build_finetune_cmd(model_path, backend, task, eval_dir, results_dir, hparams):
     spec = FINETUNE_SPECS[task]
     clue_dir = pathlib.Path(eval_dir) / "full_eval" / "clue"
     epochs = hparams["wsc_epochs"] if spec.get("use_wsc_epochs") else hparams["max_epochs"]
@@ -131,6 +131,10 @@ def _build_finetune_cmd(model_path, task, eval_dir, results_dir, hparams):
         "--metric_for_valid", "accuracy",
         "--seed", str(hparams["seed"]),
     ]
+    if backend == "causal":
+        cmd += ["--causal", "--take_final"]
+    elif backend.startswith("enc_dec"):
+        cmd += ["--enc_dec"]
     return cmd
 
 
@@ -286,7 +290,7 @@ def cmd_eval(args):
             _run(cmd, f"{stem} on {task}")
 
         for task in finetune_tasks:
-            cmd = _build_finetune_cmd(model_path, task, eval_dir, results_dir, hparams)
+            cmd = _build_finetune_cmd(model_path, backend, task, eval_dir, results_dir, hparams)
             _run(cmd, f"{stem} on {task}")
 
     # ── Collect results ──────────────────────────────────────────────────────
