@@ -12,6 +12,18 @@ from .eval import eval
 
 BACKEND_CHOICES = ["mlm", "causal", "mntp", "enc_dec_mask", "enc_dec_prefix"]
 
+
+def _model_name(args: argparse.Namespace) -> str:
+    return os.path.basename(os.path.normpath(str(args.model_path_or_name)))
+
+
+def _revision_name(args: argparse.Namespace) -> str:
+    return args.revision_name if args.revision_name is not None else "main"
+
+
+def _task_output_dir(args: argparse.Namespace) -> pathlib.Path:
+    return pathlib.Path(args.output_dir) / _model_name(args) / _revision_name(args) / "cogbench" / args.task
+
 def _parse_arguments():
     parser = argparse.ArgumentParser()
 
@@ -48,18 +60,16 @@ def _parse_arguments():
 
 
 def create_evaluation_report(args: argparse.ArgumentParser):
-    output_root = str(args.output_dir)
-    model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
-    model_root = pathlib.Path(output_root) / model_name
-    output_dir = model_root / "results"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    model_name = _model_name(args)
+    task_dir = _task_output_dir(args)
+    task_dir.mkdir(parents=True, exist_ok=True)
 
     metrics = []
 
     if args.task == "word_fmri":
-        pattern = os.path.join(output_root, model_name, "results", "word_fmri", "*_score.mat")
+        pattern = str(task_dir / "*_score.mat")
         if args.fast:
-            pattern = os.path.join(output_root, model_name, "results", "word_fmri", "*_sanity_score.mat")
+            pattern = str(task_dir / "*_sanity_score.mat")
 
         for file_path in sorted(glob.glob(pattern)):
             mat = sio.loadmat(file_path)
@@ -70,8 +80,7 @@ def create_evaluation_report(args: argparse.ArgumentParser):
 
     elif args.task == "fmri":
         patterns = [
-            os.path.join(output_root, model_name, "results", "fmri", "*", "*_average.mat"),
-            os.path.join(output_root, model_name, "results", "fmri", "*", "*_average.mat"),
+            str(task_dir / "*" / "*_average.mat"),
         ]
         fmri_files = []
         for pattern in patterns:
@@ -85,7 +94,7 @@ def create_evaluation_report(args: argparse.ArgumentParser):
             metrics.append({"file": file_path, "value": score})
 
     elif args.task == "meg":
-        pattern = os.path.join(output_root, model_name, "results", "meg", "*_rsa_*.mat")
+        pattern = str(task_dir / "*_rsa_*.mat")
         for file_path in sorted(glob.glob(pattern)):
             mat = sio.loadmat(file_path)
             if "sess_avg" not in mat:
@@ -106,7 +115,7 @@ def create_evaluation_report(args: argparse.ArgumentParser):
             if score is not None:
                 metrics.append({"file": file_path, "value": score})
     elif args.task == "eye_tracking":
-        eye_report_path = os.path.join(output_root, model_name, "results", "eye_tracking", f"cogbench_eye_tracking_{model_name}_report.json")
+        eye_report_path = str(task_dir / f"cogbench_eye_tracking_{model_name}_report.json")
         if os.path.exists(eye_report_path):
             with open(eye_report_path, "r", encoding="utf-8") as f:
                 eye_report = json.load(f)
@@ -117,7 +126,7 @@ def create_evaluation_report(args: argparse.ArgumentParser):
     summary = {
         "task": args.task,
         "model_name": model_name,
-        "output_root": output_root,
+        "output_root": str(task_dir),
         "fast": bool(args.fast),
         "n_result_files": len(metrics),
         "mean": float(np.nanmean(values)) if values else None,
@@ -126,7 +135,7 @@ def create_evaluation_report(args: argparse.ArgumentParser):
         "files": metrics,
     }
 
-    report_path = output_dir / f"cogbench_{args.task}_{model_name}_report.json"
+    report_path = task_dir / f"cogbench_{args.task}_{model_name}_report.json"
     with report_path.open("w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 

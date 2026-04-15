@@ -111,7 +111,10 @@ def infer_word(
 
 	if save_predictions:
 		persist_root = output_root if output_root is not None else root_path
-		save_path = os.path.join(persist_root, model_name, "word_feature.json")
+		if output_root is not None:
+			save_path = os.path.join(persist_root, "word_feature.json")
+		else:
+			save_path = os.path.join(persist_root, model_name, "word_feature.json")
 		os.makedirs(os.path.dirname(save_path), exist_ok=True)
 		serializable_features = {word: feature.tolist() for word, feature in word_features.items()}
 		with open(save_path, "w", encoding="utf-8") as f:

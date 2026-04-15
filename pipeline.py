@@ -182,7 +182,7 @@ def _collect_finetune(results_dir, model_stem, task):
 def _collect_cogbench(results_dir, model_stem, task):
     report = (
         pathlib.Path(results_dir)
-        / model_stem / "results"
+        / model_stem / "main" / "cogbench" / task
         / f"cogbench_{task}_{model_stem}_report.json"
     )
     if not report.exists():

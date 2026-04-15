@@ -177,7 +177,8 @@ def eval_fmri(args: ArgumentParser):
     data_path = str(args.data_path)
     output_root = str(args.output_dir)
     model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
-    model_root = os.path.join(output_root, model_name)
+    revision_name = args.revision_name if args.revision_name is not None else "main"
+    task_output_dir = os.path.join(output_root, model_name, revision_name, "cogbench", "fmri")
 
     split_dirs = _resolve_split_dirs(data_path)
 
@@ -187,7 +188,7 @@ def eval_fmri(args: ArgumentParser):
             raise FileNotFoundError(f"No story_*.mat files found under: {os.path.join(data_path, 'node_count_bu')}")
 
         story_ids = all_story_ids[:FAST_STORY_COUNT] if args.fast else all_story_ids
-        feature_matrix = _load_feature_matrix(model_root, data_path, story_ids)
+        feature_matrix = _load_feature_matrix(task_output_dir, data_path, story_ids)
     else:
         split_story_ids = {}
         split_features = {}
@@ -204,7 +205,7 @@ def eval_fmri(args: ArgumentParser):
             if args.fast:
                 ids = ids[:FAST_STORY_COUNT]
             split_story_ids[split_name] = ids
-            split_features[split_name] = _load_feature_matrix(model_root, split_path, ids)
+            split_features[split_name] = _load_feature_matrix(task_output_dir, split_path, ids)
 
     roi_types = ["Cognition", "Language", "Manipulation", "Memory", "Reward", "Vision"]
 
@@ -212,7 +213,7 @@ def eval_fmri(args: ArgumentParser):
         roi_types = roi_types[:1]
 
     fmri_root = os.path.join(data_path, "fmri")
-    result_root = os.path.join(model_root, "results", "fmri")
+    result_root = task_output_dir
 
     for roi in roi_types:
         roi_result_dir = os.path.join(result_root, roi)

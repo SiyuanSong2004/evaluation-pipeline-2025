@@ -70,7 +70,8 @@ def get_layer_similarity(word_vectors, eye_tensor: torch.Tensor):
 def eval_eye_tracking(args):
 	output_root = str(args.output_dir)
 	model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
-	result_dir = os.path.join(output_root, model_name, "results", "eye_tracking")
+	revision_name = args.revision_name if args.revision_name is not None else "main"
+	result_dir = os.path.join(output_root, model_name, revision_name, "cogbench", "eye_tracking")
 
 	cache_path = os.path.join(result_dir, INFER_CACHE_FILENAME)
 	if not os.path.exists(cache_path):

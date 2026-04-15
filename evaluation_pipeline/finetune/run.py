@@ -68,7 +68,7 @@ def _parse_arguments() -> argparse.Namespace:
     parser.add_argument("--exp_name", type=str, default=None, help="The name of the run as it appears on W&B. By default this is: 'model_name_task_seed'")
 
     args = parser.parse_args()
-    args.model_name = pathlib.Path(args.model_name_or_path).stem
+    args.model_name = pathlib.Path(args.model_name_or_path).name
 
     if args.wandb and args.exp_name is None:
         args.exp_name = "_".join([args.model_name, args.task, str(args.seed)])

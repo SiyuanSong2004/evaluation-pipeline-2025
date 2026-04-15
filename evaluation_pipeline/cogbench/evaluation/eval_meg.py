@@ -12,11 +12,12 @@ def eval_meg(args: ArgumentParser):
     data_path = str(args.data_path)
     output_root = str(args.output_dir)
     model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
-    model_root = os.path.join(output_root, model_name)
+    revision_name = args.revision_name if args.revision_name is not None else "main"
+    task_output_dir = os.path.join(output_root, model_name, revision_name, "cogbench", "meg")
 
-    feature_root = model_root
+    feature_root = task_output_dir
     pu_root = data_path + "/"
-    result_root = os.path.join(model_root, "results", "meg")
+    result_root = task_output_dir
 
     starts = [6, 7]
     if args.fast:

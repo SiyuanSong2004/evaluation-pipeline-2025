@@ -186,12 +186,15 @@ def eval_word_fmri(args):
     data_path = _resolve_cogbench_root(str(args.data_path))
     output_root = str(args.output_dir)
     model_name = os.path.basename(os.path.normpath(str(args.model_path_or_name)))
-    feature_json_path = os.path.join(output_root, model_name, "word_feature.json")
+    revision_name = args.revision_name if args.revision_name is not None else "main"
+    task_output_dir = os.path.join(output_root, model_name, revision_name, "cogbench", "word_fmri")
+    feature_json_path = os.path.join(task_output_dir, "word_feature.json")
     if not os.path.exists(feature_json_path):
         raise FileNotFoundError(
             f"Feature file not found: {feature_json_path}. Please run inference first."
         )
-    out_dir = os.path.join(output_root, model_name, "results", "word_fmri")
+    out_dir = task_output_dir
+    os.makedirs(out_dir, exist_ok=True)
 
     split_dirs = _resolve_split_dirs(data_path)
 

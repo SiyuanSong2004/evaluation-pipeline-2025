@@ -338,7 +338,7 @@ def infer_eye_tracking(
 			break
 
 	if merged_layers is None or merged_eye is None:
-		report_dir = os.path.join(output_dir, "results", "eye_tracking")
+		report_dir = output_dir
 		os.makedirs(report_dir, exist_ok=True)
 		if failed_samples:
 			error_log_path = os.path.join(report_dir, ERROR_LOG_FILENAME)
@@ -383,7 +383,7 @@ def infer_eye_tracking(
 	}
 
 	if failed_samples:
-		result_dir = os.path.join(output_dir, "results", "eye_tracking")
+		result_dir = output_dir
 		os.makedirs(result_dir, exist_ok=True)
 		error_log_path = os.path.join(result_dir, ERROR_LOG_FILENAME)
 		with open(error_log_path, "w", encoding="utf-8") as f:
@@ -393,7 +393,7 @@ def infer_eye_tracking(
 		print(f"saved failed samples log: {error_log_path}")
 
 	if save_predictions:
-		result_dir = os.path.join(output_dir, "results", "eye_tracking")
+		result_dir = output_dir
 		os.makedirs(result_dir, exist_ok=True)
 		cache_path = os.path.join(result_dir, INFER_CACHE_FILENAME)
 		np.savez_compressed(cache_path, eye_matrix=eye_matrix, **layer_arrays)
