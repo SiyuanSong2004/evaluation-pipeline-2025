@@ -149,6 +149,7 @@ def prepare_cogbench(output_dir: pathlib.Path) -> None:
     print(f"  Downloading {COGBENCH_TAR} from {COGBENCH_REPO} ...")
     local_path = hf_hub_download(repo_id=COGBENCH_REPO, filename=COGBENCH_TAR, repo_type="dataset")
 
+    output_dir = output_dir / ".."
     print(f"  Extracting to {output_dir} ...")
     output_dir.mkdir(parents=True, exist_ok=True)
     with tarfile.open(local_path, "r") as tar:
