@@ -1,9 +1,26 @@
 import torch
 from types import SimpleNamespace
+import inspect
 from transformers import AutoModel, AutoModelForSeq2SeqLM, AutoTokenizer
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 ENC_DEC_BACKENDS = {"enc_dec_mask", "enc_dec_prefix"}
+
+
+def _filter_forward_inputs(model, inputs: dict):
+	"""Keep only keyword arguments accepted by model.forward.
+
+	Some architectures (e.g., Mamba) do not accept token_type_ids.
+	"""
+	forward_sig = inspect.signature(model.forward)
+	accepted_keys = set(forward_sig.parameters.keys())
+	accepts_var_kwargs = any(
+		param.kind == inspect.Parameter.VAR_KEYWORD
+		for param in forward_sig.parameters.values()
+	)
+	if accepts_var_kwargs:
+		return dict(inputs)
+	return {key: value for key, value in inputs.items() if key in accepted_keys}
 
 def get_model_and_tokenizer(model_path_or_name: str, revision_name: str | None = None, backend: str | None = None):
 	if backend in ENC_DEC_BACKENDS:
@@ -49,10 +66,11 @@ def forward_for_representations(model, inputs: dict, backend: str | None = None)
 	For encoder-decoder models, use decoder outputs as the representation source.
 	"""
 	if backend in ENC_DEC_BACKENDS or getattr(model.config, "is_encoder_decoder", False):
-		forward_kwargs = dict(inputs)
+		forward_kwargs = _filter_forward_inputs(model, inputs)
 		forward_kwargs["decoder_input_ids"] = inputs["input_ids"]
 		if "attention_mask" in inputs:
 			forward_kwargs["decoder_attention_mask"] = inputs["attention_mask"]
+		forward_kwargs = _filter_forward_inputs(model, forward_kwargs)
 
 		outputs = model(**forward_kwargs, output_hidden_states=True, return_dict=True)
 
@@ -68,4 +86,5 @@ def forward_for_representations(model, inputs: dict, backend: str | None = None)
 			last_hidden_state=decoder_last_hidden_state,
 		)
 
-	return model(**inputs, output_hidden_states=True, return_dict=True)
+	forward_kwargs = _filter_forward_inputs(model, inputs)
+	return model(**forward_kwargs, output_hidden_states=True, return_dict=True)
