@@ -193,7 +193,10 @@ def _collect_cogbench(results_dir, model_stem, task):
         return None
     try:
         data = json.loads(report.read_text(encoding="utf-8"))
-        return float(data["mean"])
+        score = float(data["mean"])
+        # Cogbench branch uses percentage display in the summary table.
+        score *= 100.0
+        return round(score, 1)
     except (KeyError, ValueError, json.JSONDecodeError):
         return None
 
