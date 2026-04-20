@@ -1,11 +1,25 @@
 #!/bin/bash
 
 MODEL_PATH=$1
-LR=${2:-3e-5}           # default: 3e-5
-BSZ=${3:-64}            # default: 32
-MAX_EPOCHS=${4:-5}     # default: 10
-WSC_EPOCHS=${5:-5}     # default: 30
-SEED=${6:-42}           # default: 42
+BACKEND=$2
+LR=${3:-3e-5}           # default: 3e-5
+BSZ=${4:-64}            # default: 64
+MAX_EPOCHS=${5:-5}      # default: 5
+WSC_EPOCHS=${6:-5}      # default: 5
+SEED=${7:-42}           # default: 42
+
+if [[ -z "$BACKEND" ]]; then
+    echo "Usage: $0 <model_path> <causal|mlm|mntp|enc_dec_mask|enc_dec_prefix> [lr] [batch_size] [max_epochs] [wsc_epochs] [seed]"
+    exit 1
+fi
+
+if [[ "$BACKEND" == "causal" ]]; then
+    BACKEND_FLAGS="--causal --take_final"
+elif [[ "$BACKEND" == enc_dec* ]]; then
+    BACKEND_FLAGS="--enc_dec"
+else
+    BACKEND_FLAGS=""
+fi
 
 model_basename=$(basename $MODEL_PATH)
 
@@ -29,8 +43,7 @@ python -m evaluation_pipeline.finetune.run \
     --metrics accuracy f1 mcc \
     --metric_for_valid accuracy \
     --seed $SEED \
-    --causal \
-    --take_final \
+    $BACKEND_FLAGS \
     --verbose
 
 # OCNLI — natural language inference, 3 labels
@@ -51,8 +64,7 @@ python -m evaluation_pipeline.finetune.run \
     --metrics accuracy \
     --metric_for_valid accuracy \
     --seed $SEED \
-    --causal \
-    --take_final \
+    $BACKEND_FLAGS \
     --verbose
 
 # TNEWS — news topic classification, 15 labels
@@ -73,8 +85,7 @@ python -m evaluation_pipeline.finetune.run \
     --metrics accuracy \
     --metric_for_valid accuracy \
     --seed $SEED \
-    --causal \
-    --take_final \
+    $BACKEND_FLAGS \
     --verbose
 
 # CLUEWSC2020 — pronoun disambiguation, 2 labels
@@ -95,6 +106,5 @@ python -m evaluation_pipeline.finetune.run \
     --metrics accuracy f1 mcc \
     --metric_for_valid accuracy \
     --seed $SEED \
-    --causal \
-    --take_final \
+    $BACKEND_FLAGS \
     --verbose

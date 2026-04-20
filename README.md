@@ -16,19 +16,7 @@ This repository contains the evaluation pipeline for the **2026 Chinese BabyLM C
 **[2026/04/19]**
 1. Updated the ZhoBLiMP dataset (`chinese-babylm-org/zhoblimp`). Please use the latest version for all evaluations.
 2. Added detailed rules for pre-training data — see the [Token Count](#token-count) section.
-
----
-## Training data
-
-- Option 1: you can use the 100M-word training data prepared by us. 
-
-Download from huggingface: https://huggingface.co/datasets/chinese-babylm-org/babylm-zho-100M
-
-100M words is calculated using jieba. 
-
-- Option 2: BYO (build your own) training data.
-As long as its size is 100M words, as tokenized by jieba. 
-
+3. Removed unused English evaluation tasks from `eval_zero_shot.sh` and `eval_zero_shot_fast.sh`. Added `<backend>` as a required argument to `eval_finetuning.sh`.
 
 ---
 
@@ -126,7 +114,7 @@ bash eval_zero_shot_fast_all_revisions.sh <model_path> <backend> <track>
 Sequence classification on Chinese CLUE tasks.
 
 ```bash
-bash eval_finetuning.sh <model_path> [lr] [batch_size] [max_epochs] [wsc_epochs] [seed]
+bash eval_finetuning.sh <model_path> <causal|mlm|mntp|enc_dec_mask|enc_dec_prefix> [lr] [batch_size] [max_epochs] [wsc_epochs] [seed]
 ```
 
 **Tasks:** AFQMC, OCNLI, TNEWS, CLUEWSC2020
@@ -248,15 +236,13 @@ bash collate_preds.sh <model_name> <backend> <track>
 
 The training data must contain **no more than 100M tokens**, where tokens are defined as **Jieba word segments** (version 0.42.1).
 
-### Option A — Use the official pre-training dataset
+### Option 1 — Use the official pre-training dataset
 
-The organizers provide a ready-to-use 100M-token dataset on HuggingFace Hub:
+The organizers provide a ready-to-use 100M-word dataset on HuggingFace Hub:
 
-```
-chinese-babylm-org/babylm-zho-100M
-```
+https://huggingface.co/datasets/chinese-babylm-org/babylm-zho-100M
 
-This dataset is derived from the original `BabyLM-community/babylm-zho` (≈ 102M tokens) by removing a portion of WenetSpeech entries to bring the total within the 100M limit.
+This dataset is derived from the original `BabyLM-community/babylm-zho` by removing a portion of WenetSpeech entries. It contains approximately 102M words as counted by jieba.
 
 Load it directly via the `datasets` library:
 
@@ -267,9 +253,9 @@ ds = load_dataset("chinese-babylm-org/babylm-zho-100M")
 
 The token count for this dataset has already been verified by the organizers using Jieba 0.42.1.
 
-### Option B — Use your own dataset (≤ 100M tokens)
+### Option 2 — BYO (build your own) training data
 
-If you choose a custom dataset, you must verify the token count yourself before submission. Count tokens with Jieba 0.42.1 as follows:
+As long as its size is 100M words, as tokenized by jieba. If you choose a custom dataset, you must verify the token count yourself before submission. Count tokens with Jieba 0.42.1 as follows:
 
 ```python
 import jieba  # version 0.42.1
@@ -308,6 +294,7 @@ assert total_tokens <= 100_000_000, "Dataset exceeds 100M token limit"
 **[2026/04/19]**
 1. 更新了 ZhoBLiMP 数据集（`chinese-babylm-org/zhoblimp`），测试请以最新版本为准。
 2. 更新了关于预训练数据规则的详细说明，见 [Token 计数](#token-计数) 部分。
+3. 移除了 `eval_zero_shot.sh` 和 `eval_zero_shot_fast.sh` 中未使用的英文评测任务。`eval_finetuning.sh` 新增必填参数 `<backend>`。
 
 ---
 
@@ -405,7 +392,7 @@ bash eval_zero_shot_fast_all_revisions.sh <model_path> <backend> <track>
 在中文 CLUE 任务上进行序列分类微调。
 
 ```bash
-bash eval_finetuning.sh <model_path> [lr] [batch_size] [max_epochs] [wsc_epochs] [seed]
+bash eval_finetuning.sh <model_path> <causal|mlm|mntp|enc_dec_mask|enc_dec_prefix> [lr] [batch_size] [max_epochs] [wsc_epochs] [seed]
 ```
 
 **任务：** AFQMC, OCNLI, TNEWS, CLUEWSC2020
@@ -527,15 +514,13 @@ bash collate_preds.sh <model_name> <backend> <track>
 
 训练数据的 **总 Token 数不得超过 1 亿（100M）**，Token 以 **Jieba 分词**（版本 0.42.1）为计量标准。
 
-### 方案 A — 使用官方预训练数据集
+### 方案 1 — 使用官方预训练数据集
 
-主办方在 HuggingFace Hub 提供了经过验证的 100M Token 数据集：
+主办方在 HuggingFace Hub 提供了经过验证的 100M 词数据集：
 
-```
-chinese-babylm-org/babylm-zho-100M
-```
+https://huggingface.co/datasets/chinese-babylm-org/babylm-zho-100M
 
-该数据集基于原始数据集 `BabyLM-community/babylm-zho`（约 102M Token）裁剪而来，通过移除部分 WenetSpeech 条目使总量符合 100M 上限。
+该数据集基于原始数据集 `BabyLM-community/babylm-zho` 移除部分 WenetSpeech 条目后得到，以 Jieba 统计约含 102M 词。
 
 通过 `datasets` 库直接加载：
 
@@ -546,9 +531,9 @@ ds = load_dataset("chinese-babylm-org/babylm-zho-100M")
 
 该数据集的 Token 数已由主办方使用 Jieba 0.42.1 完成核验，参赛者可直接使用，无需自行统计。
 
-### 方案 B — 使用自选数据集（≤ 100M Token）
+### 方案 2 — 使用自选数据集（BYO）
 
-若选择自定义数据集，须在提交前自行核验 Token 总数。请按以下方式使用 Jieba 0.42.1 统计：
+只要词数不超过 100M（以 Jieba 分词为准）即可。若选择自定义数据集，须在提交前自行核验词数总量。请按以下方式使用 Jieba 0.42.1 统计：
 
 ```python
 import jieba  # 版本 0.42.1
