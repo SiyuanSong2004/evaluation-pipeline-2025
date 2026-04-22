@@ -116,8 +116,46 @@ def encode_words_mean_pool(
 				return_tensors="pt",
 				truncation=True,
 				max_length=max_len,
+				return_special_tokens_mask=True
 			)
-			word_ids = encoded_cpu.word_ids(batch_index=0)
+			if getattr(tokenizer, "is_fast", False):
+				word_ids = encoded_cpu.word_ids(batch_index=0)
+			else:
+				word_ids = _word_ids_slow_fallback(tokenizer, words, encoded_cpu)
+
+			# -------------------------------------------------
+			# Debug reconstructed/aligned word_ids
+			# Enable with:
+			#   export DEBUG_WORD_IDS=1
+			#   export DEBUG_WORD_IDS_MAX=10
+			if os.getenv("DEBUG_WORD_IDS", "0") == "1":
+				max_print = int(os.getenv("DEBUG_WORD_IDS_MAX", "10"))
+				printed = getattr(encode_words_mean_pool, "_debug_word_ids_printed", 0)
+				if printed < max_print:
+					input_ids_dbg = encoded_cpu["input_ids"][0].tolist()
+					tokens_dbg = tokenizer.convert_ids_to_tokens(input_ids_dbg)
+
+					# compact per-word coverage summary
+					coverage = {}
+					for i, wid in enumerate(word_ids):
+						if wid is None:
+							continue
+						coverage.setdefault(wid, []).append(i)
+
+					print("\n[DEBUG_WORD_IDS]")
+					print(f"is_fast={getattr(tokenizer, 'is_fast', False)}")
+					print(f"words={words}")
+					print(f"tokens={tokens_dbg}")
+					print(f"word_ids={word_ids}")
+					print("coverage_by_word_index:")
+					for wid in range(len(words)):
+						pos = coverage.get(wid, [])
+						toks = [tokens_dbg[p] for p in pos]
+						print(f"  word[{wid}]='{words[wid]}' -> positions={pos}, tokens={toks}")
+
+					setattr(encode_words_mean_pool, "_debug_word_ids_printed", printed + 1)
+			# -------------------------------------------------
+
 			encoded = {key: value.to(DEVICE) for key, value in encoded_cpu.items()}
 
 			with torch.inference_mode():
@@ -137,6 +175,41 @@ def encode_words_mean_pool(
 	if not all_word_reprs:
 		return np.zeros((0, model.config.hidden_size), dtype=np.float32)
 	return np.stack(all_word_reprs, axis=0)
+
+
+def _word_ids_slow_fallback(tokenizer, words, encoded_cpu):
+	"""
+	Reconstruct a word_ids-like list for slow tokenizers.
+	Returns: list[Optional[int]] length == sequence length
+	"""
+	input_ids = encoded_cpu["input_ids"][0].tolist()
+
+	if "special_tokens_mask" in encoded_cpu:
+		special_mask = encoded_cpu["special_tokens_mask"][0].tolist()
+	else:
+		special_set = set(getattr(tokenizer, "all_special_ids", []))
+		special_mask = [1 if tid in special_set else 0 for tid in input_ids]
+
+	# Non-special token positions in final sequence
+	content_positions = [i for i, m in enumerate(special_mask) if m == 0]
+
+	# Token count per original word (without specials)
+	piece_lens = []
+	for w in words:
+		ids = tokenizer(w, add_special_tokens=False)["input_ids"]
+		piece_lens.append(len(ids))
+
+	word_ids = [None] * len(input_ids)
+	cursor = 0
+	for wid, n_pieces in enumerate(piece_lens):
+		for _ in range(n_pieces):
+			if cursor >= len(content_positions):
+				return word_ids  # truncated sequence
+			pos = content_positions[cursor]
+			word_ids[pos] = wid
+			cursor += 1
+
+	return word_ids
 
 
 def infer_sentence(

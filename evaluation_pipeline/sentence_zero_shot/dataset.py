@@ -104,34 +104,148 @@ class CompletionRankingDataset(Dataset):
     def process_mlm_sentences(self, sentence_dict: dict[str, list[str] | list[None]], image: Image | None):
         """Helper function for processing the dictionary associated with an individual
         datapoint for inference with an LM trained with the masked language modeling loss.
-
-        Args:
-            sentence_dict (dict[str, Any]): The dictionary associated with the datapoint
         """
+        import os
+
         sentences = sentence_dict["sentences"]
         completions = sentence_dict["completions"]
         mask_index = self.tokenizer.mask_token_id
 
+        def _unwrap_singleton_list(x):
+            # Some processors may return [[...]] for a single example.
+            if isinstance(x, list) and len(x) == 1 and isinstance(x[0], list):
+                return x[0]
+            return x
+
+        def _find_subsequence(haystack, needle):
+            """Return first start idx of needle in haystack, else -1."""
+            if len(needle) == 0:
+                return -1
+            for i in range(len(haystack) - len(needle) + 1):
+                if haystack[i : i + len(needle)] == needle:
+                    return i
+            return -1
+
+        def _find_last_subsequence(haystack, needle):
+            """Return last start idx of needle in haystack, else -1."""
+            if len(needle) == 0:
+                return -1
+            for i in range(len(haystack) - len(needle), -1, -1):
+                if haystack[i : i + len(needle)] == needle:
+                    return i
+            return -1
+
+        # Debug controls:
+        #   export DEBUG_MLM_SPANS=1
+        #   export DEBUG_MLM_MAX_PRINT=100
+        debug_enabled = os.getenv("DEBUG_MLM_SPANS", "0") == "1"
+        max_print = int(os.getenv("DEBUG_MLM_MAX_PRINT", "20"))
+        debug_count = getattr(self, "_debug_mlm_print_count", 0)
+
         processed_sentence_dict = {}
+        is_fast = bool(getattr(self.tokenizer, "is_fast", False))
+
         for sentence_idx, (sentence, completion) in enumerate(zip(sentences, completions)):
             # Basic outputs
             if image is None:
-                tokenizer_output = self.processor(text=sentence, return_offsets_mapping=True)
+                if is_fast:
+                    tokenizer_output = self.processor(text=sentence, return_offsets_mapping=True)
+                else:
+                    tokenizer_output = self.processor(text=sentence)
             else:
-                tokenizer_output = self.processor(text=sentence, images=image, return_offsets_mapping=True)
-            tokens = tokenizer_output["input_ids"]
-            attention_mask = tokenizer_output["attention_mask"]
+                if is_fast:
+                    tokenizer_output = self.processor(text=sentence, images=image, return_offsets_mapping=True)
+                else:
+                    tokenizer_output = self.processor(text=sentence, images=image)
+
+            tokens = _unwrap_singleton_list(tokenizer_output["input_ids"])
+            attention_mask = _unwrap_singleton_list(tokenizer_output["attention_mask"])
             embed_image = torch.FloatTensor(tokenizer_output["pixel_values"]) if image is not None else None
 
-            # Get target tokens
             start_char_idx = len(sentence) - len(completion)
             phrase_indices = []
             target_tokens = []
-            for i, (start, end) in enumerate(tokenizer_output['offset_mapping']):
-                # If token overlaps with our phrase's character span
-                if end > start_char_idx:
-                    phrase_indices.append(i)
-                    target_tokens.append(tokens[i])
+
+            # ---------- Fast tokenizer path (offset_mapping available) ----------
+            if is_fast and "offset_mapping" in tokenizer_output:
+                offsets = _unwrap_singleton_list(tokenizer_output["offset_mapping"])
+                for i, (start, end) in enumerate(offsets):
+                    if end > start_char_idx:
+                        phrase_indices.append(i)
+                        target_tokens.append(tokens[i])
+
+            # ---------- Slow tokenizer fallback (no offset_mapping) ----------
+            else:
+                # Tokenize plain text parts without special tokens
+                prefix_text = sentence[:start_char_idx]
+                full_ids_nospec = self.tokenizer(sentence, add_special_tokens=False)["input_ids"]
+                prefix_ids_nospec = self.tokenizer(prefix_text, add_special_tokens=False)["input_ids"]
+                completion_ids_nospec = self.tokenizer(completion, add_special_tokens=False)["input_ids"]
+
+                # Where does full text tokenization sit inside processor tokens?
+                full_start_in_tokens = _find_subsequence(tokens, full_ids_nospec)
+
+                # Determine start of completion inside full_ids_nospec
+                # Prefer exact suffix match if available (robust for your setup).
+                if (
+                    len(completion_ids_nospec) > 0
+                    and len(full_ids_nospec) >= len(completion_ids_nospec)
+                    and full_ids_nospec[-len(completion_ids_nospec):] == completion_ids_nospec
+                ):
+                    phrase_start_in_full = len(full_ids_nospec) - len(completion_ids_nospec)
+                else:
+                    # Fallback approximation from prefix tokenized length
+                    phrase_start_in_full = min(len(prefix_ids_nospec), len(full_ids_nospec))
+
+                if full_start_in_tokens != -1:
+                    phrase_start = full_start_in_tokens + phrase_start_in_full
+                    if len(completion_ids_nospec) > 0:
+                        phrase_end = phrase_start + len(completion_ids_nospec)
+                    else:
+                        phrase_end = full_start_in_tokens + len(full_ids_nospec)
+
+                    phrase_end = min(phrase_end, len(tokens))
+                    for i in range(max(0, phrase_start), phrase_end):
+                        phrase_indices.append(i)
+                        target_tokens.append(tokens[i])
+                else:
+                    # Last-resort: find completion directly in processor tokens
+                    comp_start = _find_last_subsequence(tokens, completion_ids_nospec)
+                    if comp_start != -1:
+                        for i in range(comp_start, comp_start + len(completion_ids_nospec)):
+                            phrase_indices.append(i)
+                            target_tokens.append(tokens[i])
+
+            # Safety fallback to avoid empty spans crashing downstream collation
+            if len(phrase_indices) == 0:
+                # Try to choose last non-padding token
+                fallback_idx = None
+                for i in range(len(attention_mask) - 1, -1, -1):
+                    if attention_mask[i] == 1:
+                        fallback_idx = i
+                        break
+                if fallback_idx is None:
+                    fallback_idx = max(len(tokens) - 1, 0)
+
+                phrase_indices = [fallback_idx]
+                target_tokens = [tokens[fallback_idx]]
+
+            # Debug print
+            if debug_enabled and debug_count < max_print:
+                recovered_token_ids = [tokens[i] for i in phrase_indices]
+                try:
+                    recovered_tokens = self.tokenizer.convert_ids_to_tokens(recovered_token_ids)
+                except Exception:
+                    recovered_tokens = [str(tid) for tid in recovered_token_ids]
+
+                print("\n[DEBUG_MLM_SPANS]")
+                print(f"sentence_idx={sentence_idx}")
+                print(f"sentence={repr(sentence)}")
+                print(f"completion={repr(completion)}")
+                print(f"phrase_indices={phrase_indices}")
+                print(f"recovered_token_ids={recovered_token_ids}")
+                print(f"recovered_tokens={recovered_tokens}")
+                debug_count += 1
 
             # Produce masked inputs
             processed_tokens = []
@@ -144,12 +258,13 @@ class CompletionRankingDataset(Dataset):
                 curr_attention_mask = torch.LongTensor(attention_mask)
                 processed_attention_masks.append(curr_attention_mask)
 
-            processed_sentence_dict[f'sentence_{sentence_idx}_tokens'] = processed_tokens
-            processed_sentence_dict[f'sentence_{sentence_idx}_attn_mask'] = processed_attention_masks
-            processed_sentence_dict[f'sentence_{sentence_idx}_indices'] = torch.LongTensor(phrase_indices)
-            processed_sentence_dict[f'sentence_{sentence_idx}_targets'] = torch.LongTensor(target_tokens)
-            processed_sentence_dict[f'sentence_{sentence_idx}_image'] = embed_image
+            processed_sentence_dict[f"sentence_{sentence_idx}_tokens"] = processed_tokens
+            processed_sentence_dict[f"sentence_{sentence_idx}_attn_mask"] = processed_attention_masks
+            processed_sentence_dict[f"sentence_{sentence_idx}_indices"] = torch.LongTensor(phrase_indices)
+            processed_sentence_dict[f"sentence_{sentence_idx}_targets"] = torch.LongTensor(target_tokens)
+            processed_sentence_dict[f"sentence_{sentence_idx}_image"] = embed_image
 
+        setattr(self, "_debug_mlm_print_count", debug_count)
         return processed_sentence_dict
 
     def process_mntp_sentences(self, sentence_dict: dict[str, list[str] | list[None]], image: Image | None):
