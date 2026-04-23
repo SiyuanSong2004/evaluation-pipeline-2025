@@ -303,7 +303,7 @@ def _collect_cogbench(results_dir, model_stem, task):
         score = float(data["mean"])
         # Cogbench branch uses percentage display in the summary table.
         score *= 100.0
-        return round(score, 1)
+        return score
     except (KeyError, ValueError, json.JSONDecodeError):
         return None
 
@@ -345,7 +345,7 @@ def _print_summary(all_tasks, scores):
             if val is None:
                 cell = "-"
             else:
-                cell = f"{val:.4f}"
+                cell = f"{val:.2f}"
             row_cells.append(f"{cell:>{col_width}}")
         print(" " + " ".join(row_cells))
 
