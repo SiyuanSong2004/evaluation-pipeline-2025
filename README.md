@@ -583,4 +583,13 @@ assert total_tokens <= 100_000_000, "数据集超出 100M Token 上限"
 | babylm-chinese-mamba-14m-epoch20 | 74.23 | 52.55 | 26.80 | 45.64 | 9.07 | 69.00 | 61.25 | 54.11 | 63.82 | 50.72 |
 | babylm-chinese-t5-14m-epoch20 | 63.58 | 52.70 | 39.20 | 53.30 | 7.99 | 69.00 | 47.63 | 50.95 | 65.46 | 49.98 |
 
+Note: 
+- Model names starting with `babylm-chinese-` are trained with 102M-word pretraining data released for this shared task. 
+- `Zh-Pythia-X-v0.1-checkpoint-3000` are trained with roughly 100M tokens (not words) at 3000 checkpoints (for comparison). They are released in the ZhoBLiMP paper: https://arxiv.org/abs/2411.06096 and can be downloaded in [HF](https://huggingface.co/collections/SJTU-CL/zh-pythia).
+- xlm-roberta-base: https://huggingface.co/FacebookAI/xlm-roberta-base
+- bert-base-chinese: https://huggingface.co/google-bert/bert-base-chinese
+- chinese-bert-wwm-ext: https://huggingface.co/hfl/chinese-bert-wwm-ext
+- roc-bert-base-zh: https://huggingface.co/weiweishi/roc-bert-base-zh
+- ChineseBERT-base: https://huggingface.co/ShannonAI/ChineseBERT-base
+
 </details>
